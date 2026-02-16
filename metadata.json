@@ -1,0 +1,5 @@
+{
+  "name": "InfiniteWeb",
+  "description": "A next-generation generative web browser powered by Gemini 2.5 and 3.0. Explore an infinite internet generated in real-time based on your imagination.",
+  "requestFramePermissions": []
+}
