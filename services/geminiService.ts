@@ -1,57 +1,86 @@
 import { GoogleGenAI } from "@google/genai";
 import { ModelTier } from "../types";
 
-// Helper to inject the click interceptor script into generated HTML
+// The "Standard Library" injected into every generated page to handle navigation and bridge the AI to the browser chrome.
 const INJECTED_SCRIPT = `
 <script>
   (function() {
-    // Intercept clicks
+    // Intercept navigation
     document.addEventListener('click', function(e) {
       const link = e.target.closest('a');
       if (link) {
-        e.preventDefault();
         const href = link.getAttribute('href');
-        if (href && href !== '#') {
+        if (href && href !== '#' && !href.startsWith('javascript:')) {
+          e.preventDefault();
           window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: href }, '*');
         }
       }
-    });
+    }, true);
 
-    // Handle form submissions (basic search simulation)
+    // Form submission interceptor
     document.addEventListener('submit', function(e) {
-      e.preventDefault();
       const form = e.target;
-      const inputs = Array.from(form.elements).filter(el => el.tagName === 'INPUT' && (el.type === 'text' || el.type === 'search'));
-      if (inputs.length > 0) {
-        const query = inputs[0].value;
-        const action = form.getAttribute('action') || window.location.pathname;
-        const newUrl = action + '?q=' + encodeURIComponent(query);
-        window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: newUrl }, '*');
+      const action = form.getAttribute('action');
+      if (!action || action.startsWith('/') || action.startsWith('http')) {
+        e.preventDefault();
+        const formData = new FormData(form);
+        const params = new URLSearchParams();
+        for (const [key, value] of formData.entries()) {
+          params.append(key, value.toString());
+        }
+        const queryStr = params.toString();
+        const target = (action || window.location.pathname) + (queryStr ? '?' + queryStr : '');
+        window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: target }, '*');
       }
     });
+
+    // Console bridge for DevTools
+    const originalLog = console.log;
+    const originalError = console.error;
+    console.log = (...args) => {
+      originalLog(...args);
+      window.parent.postMessage({ type: 'DEVTOOLS_CONSOLE_LOG', level: 'log', payload: args.map(a => String(a)) }, '*');
+    };
+    console.error = (...args) => {
+      originalError(...args);
+      window.parent.postMessage({ type: 'DEVTOOLS_CONSOLE_LOG', level: 'error', payload: args.map(a => String(a)) }, '*');
+    };
   })();
 </script>
 `;
 
 const SYSTEM_INSTRUCTION = `
-You are InfiniteWeb, an advanced AI engine capable of generating fully functional, high-fidelity web applications and sites on the fly.
-Your task is to act as a web server and browser engine combined. When a user provides a URL or a natural language query, you generate the complete HTML, CSS, and JavaScript to render that page.
+You are InfiniteWeb 3.0, the world's most advanced generative web engine. You don't just "generate pages"; you simulate a fully interactive, hyper-realistic internet.
 
-GUIDELINES:
-1. **Aesthetics**: Use Tailwind CSS (via CDN) for all styling. Aim for modern, polished, "FAANG-quality" designs. Use gradients, glassmorphism, and clean typography.
-2. **Functionality**: The page should be interactive. Use vanilla JavaScript to make buttons work, tabs switch, and simple logic functional (e.g., calculators, to-do lists, simple games).
-3. **Images**: Use "https://picsum.photos/seed/{random_string}/800/600" for placeholder images. Do NOT use broken local paths.
-4. **Links**: You must simulate a real website structure. Create links (<a href="...">) to plausible internal pages (e.g., /about, /products/1, /contact). 
-5. **Content**: Hallucinate rich, detailed content relevant to the URL. If the user visits "mars-colony.org", create a convincing dashboard for a Mars colony.
-6. **Completeness**: Return ONLY the raw HTML code starting with <!DOCTYPE html>. Do not wrap in markdown code blocks. 
-7. **No External Dependencies**: Do not rely on external CSS/JS files other than Tailwind CSS and perhaps Google Fonts. All custom logic must be inline.
+### CORE ARCHITECTURAL PRINCIPLES:
+1. **Uncompromising Quality**: Every page must look like a high-end, award-winning website. Use Tailwind CSS for all styling.
+2. **Total Interactivity**: If it looks like a button, it MUST work. If it's a dashboard, the data should be dynamic (hallucinate realistic real-time updates using JS intervals).
+3. **Library Ecosystem**: 
+   - Icons: Use Lucide Icons (<script src="https://unpkg.com/lucide@latest"></script> followed by lucide.createIcons()).
+   - Animations: Use GSAP for cinematic transitions (<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>).
+   - Charts: Use Chart.js for data visualization (<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>).
+   - 3D: Use PlayCanvas for immersive games/simulations (<script src="https://code.playcanvas.com/playcanvas-latest.js"></script>).
+
+### GAME ENGINE (PLAYCANVAS) SPECIFICS:
+When a URL or prompt implies a game or 3D world:
+- Initialize a full-screen canvas with id "application-canvas".
+- Implement responsive resizing: app.setCanvasFillMode(pc.FILLMODE_FILL_WINDOW); app.setCanvasResolution(pc.RESOLUTION_AUTO);
+- Create complex environments using primitive archetypes (cubes, spheres, planes) but styled with advanced shaders and light mapping.
+- Implement polished "game-feel": smooth camera damping, particle effects for actions, and responsive WASD/Mouse controls.
+
+### BEHAVIORAL DIRECTIVES:
+- Act as a high-level full-stack engineer and a world-class creative director.
+- Use sophisticated typography (Inter, JetBrains Mono, or Playfair Display via Google Fonts).
+- Implement "Micro-interactions": hover scales, subtle box-shadow transitions, and smooth entrance animations using GSAP.
+- Always include a "Debug Footer" or small AI-generated "Copyright 202X - Simulated by InfiniteWeb" note.
+
+### OUTPUT FORMAT:
+- Return ONLY the raw HTML5 code starting with <!DOCTYPE html>.
+- NO markdown wrappers. NO explanations. NO code blocks. JUST CODE.
 `;
 
 const cleanHtml = (html: string) => {
-    // Cleanup markdown if the model accidentally includes it despite instructions
     html = html.replace(/^```html\n?/, '').replace(/\n?```$/, '').trim();
-
-    // Inject our bridge script if not present
     if (html.includes('</body>') && !html.includes('INFINITE_WEB_NAVIGATE')) {
       html = html.replace('</body>', `${INJECTED_SCRIPT}</body>`);
     } else if (!html.includes('INFINITE_WEB_NAVIGATE')) {
@@ -63,19 +92,24 @@ const cleanHtml = (html: string) => {
 export const generatePageContent = async (
   url: string,
   model: ModelTier,
-  previousContext?: string
+  isDeepResearch: boolean = false
 ): Promise<string> => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
   
+  // Enhance the prompt with "environmental" cues to help the AI contextualize its "server" role
   const prompt = `
-    User is visiting: "${url}"
-    Context: ${previousContext || "None - Start of session"}
+    [REQUEST_TYPE: SERVER_GET]
+    [TARGET_URL: "${url}"]
+    [BROWSER_USER_AGENT: "InfiniteWeb/3.0 (LatentSpace; Interactive)"]
+    [DEEP_RESEARCH_MODE: ${isDeepResearch ? 'ENABLED' : 'DISABLED'}]
     
-    TASK: Generate the full, production-ready HTML5 code for this specific page. 
-    Maintain absolute relevance to the URL. If the URL is "search://...", generate a dynamic search results page for that query.
+    TASK: Execute the generation of the page at the target URL. 
+    ${isDeepResearch ? "CRITICAL: Perform deep architectural reasoning. Ensure every single JS component is flawless and robust. Optimize for maximum visual fidelity." : ""}
+    If this is a known brand site, simulate its high-fidelity alternative universe version.
+    If it is a tool or game, make it fully production-ready.
   `;
 
   try {
@@ -84,42 +118,15 @@ export const generatePageContent = async (
       contents: prompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 0.8,
-        // Use thinking budget for Pro model to ensure high architectural quality
-        ...(model === ModelTier.PRO ? { thinkingConfig: { thinkingBudget: 4000 } } : {})
+        temperature: isDeepResearch ? 0.9 : 0.7,
+        ...(model === ModelTier.PRO ? { thinkingConfig: { thinkingBudget: isDeepResearch ? 12000 : 6000 } } : {})
       }
     });
 
-    const html = response.text || "<!-- Error generating content --><h1>404 Page Generation Failed</h1>";
-    return cleanHtml(html);
+    return cleanHtml(response.text || "<!-- Error --><h1>Empty Response</h1>");
   } catch (error) {
-    console.error("Gemini Generation Error:", error);
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return `
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <script src="https://cdn.tailwindcss.com"></script>
-      </head>
-      <body class="bg-[#050505] text-white flex items-center justify-center min-h-screen flex-col font-sans">
-        <div class="max-w-xl p-8 bg-white/5 border border-white/10 rounded-2xl backdrop-blur-xl shadow-2xl">
-            <h1 class="text-3xl font-bold mb-4 text-red-500 flex items-center gap-3">
-                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                Generation Halted
-            </h1>
-            <p class="text-gray-400 mb-6 leading-relaxed">The generative engine encountered an anomaly while constructing this reality. This usually happens due to safety filters or network congestion.</p>
-            <div class="bg-black/50 p-4 rounded-lg text-[10px] font-mono text-red-400/80 border border-red-500/20 mb-6 overflow-auto max-h-32">
-              ${errorMessage}
-            </div>
-            <div class="flex gap-4">
-                <button onclick="window.parent.postMessage({type: 'INFINITE_WEB_NAVIGATE', url: '/'}, '*')" class="flex-1 py-3 bg-white/10 hover:bg-white/20 rounded-xl transition-all font-medium">Home</button>
-                <button onclick="window.location.reload()" class="flex-1 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl transition-all font-medium shadow-lg shadow-blue-500/20">Retry Generation</button>
-            </div>
-        </div>
-      </body>
-      </html>
-    `;
+    console.error("Gemini Error:", error);
+    throw error;
   }
 };
 
@@ -134,17 +141,17 @@ export const refinePageContent = async (
   const ai = new GoogleGenAI({ apiKey });
 
   const prompt = `
-    MODIFICATION REQUEST:
-    
-    USER INSTRUCTION: "${instruction}"
+    [REQUEST_TYPE: CODE_REFINEMENT]
+    [INSTRUCTION: "${instruction}"]
 
-    CURRENT HTML STATE:
+    TASK: Modify the existing HTML source to satisfy the user's request. 
+    Keep all injected bridge scripts intact. 
+    Maintain the design system.
+    Return the FULL updated HTML source.
+
+    [CURRENT_SOURCE_START]
     ${currentHtml}
-
-    TASK:
-    Analyze the current HTML and apply the requested changes exactly. 
-    Maintain the existing design language and Tailwind CSS integration.
-    Return the FULL UPDATED HTML.
+    [CURRENT_SOURCE_END]
   `;
 
   try {
@@ -154,8 +161,7 @@ export const refinePageContent = async (
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
         temperature: 0.4,
-        // Refinement is complex, use thinking
-        ...(model === ModelTier.PRO ? { thinkingConfig: { thinkingBudget: 2000 } } : {})
+        ...(model === ModelTier.PRO ? { thinkingConfig: { thinkingBudget: 4000 } } : {})
       }
     });
 

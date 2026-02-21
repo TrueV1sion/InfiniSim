@@ -10,10 +10,19 @@ const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, o
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
-    // We update the srcdoc whenever content changes.
-    // This is safer than document.write and provides good isolation.
     if (iframeRef.current) {
-        iframeRef.current.srcdoc = htmlContent;
+        // Using blob URL instead of srcdoc for better compatibility with some scripts and resources
+        const blob = new Blob([htmlContent], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        
+        const oldUrl = iframeRef.current.src;
+        iframeRef.current.src = url;
+
+        return () => {
+            if (oldUrl.startsWith('blob:')) {
+                URL.revokeObjectURL(oldUrl);
+            }
+        };
     }
   }, [htmlContent]);
 
@@ -31,13 +40,13 @@ const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, o
 
   return (
     <div className="flex-1 w-full h-full relative bg-white">
-       {/* To handle click interception, we rely on the injected script in the HTML 
-           sending postMessages to window.parent */}
       <iframe
         ref={iframeRef}
         title={title}
         className="w-full h-full border-none block"
-        sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals"
+        // Ensure all necessary permissions for interactive content and games are granted
+        sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals allow-pointer-lock allow-downloads"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
       />
     </div>
   );

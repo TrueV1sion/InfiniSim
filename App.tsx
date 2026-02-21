@@ -45,15 +45,17 @@ const App: React.FC = () => {
     getStored('model', ModelTier.FLASH)
   );
 
+  const [deepResearch, setDeepResearch] = useState<boolean>(() =>
+    getStored('deepResearch', false)
+  );
+
   const [currentUrl, setCurrentUrl] = useState<string>(() => {
-    // Restore current URL from history if available
     if (historyIndex >= 0 && history[historyIndex]) {
       return history[historyIndex].url;
     }
     return '';
   });
 
-  // Init loading state if we are about to resume a session
   const [loading, setLoading] = useState<boolean>(() => {
      return historyIndex >= 0 && !!history[historyIndex];
   });
@@ -62,8 +64,20 @@ const App: React.FC = () => {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isDevToolsOpen, setIsDevToolsOpen] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
+  const currentRequestRef = useRef<number>(0);
+  const [hasKey, setHasKey] = useState<boolean>(true);
 
   // Persistence Effects
+  useEffect(() => {
+    const checkKey = async () => {
+      if (window.aistudio && window.aistudio.hasSelectedApiKey) {
+        const selected = await window.aistudio.hasSelectedApiKey();
+        setHasKey(selected);
+      }
+    };
+    checkKey();
+  }, []);
+
   useEffect(() => {
     setStored('history', history);
   }, [history]);
@@ -80,12 +94,18 @@ const App: React.FC = () => {
     setStored('model', model);
   }, [model]);
 
+  useEffect(() => {
+    setStored('deepResearch', deepResearch);
+  }, [deepResearch]);
+
   // Core navigation logic
   const navigateTo = useCallback(async (url: string, isHistoryNav = false) => {
+    const requestId = Date.now();
+    currentRequestRef.current = requestId;
+
     setLoading(true);
     setCurrentUrl(url);
 
-    // Update history only if it's a new navigation event
     if (!isHistoryNav) {
       const newHistory = history.slice(0, historyIndex + 1);
       newHistory.push({ url, timestamp: Date.now() });
@@ -94,27 +114,61 @@ const App: React.FC = () => {
     }
 
     try {
-      // Generate content
-      const html = await generatePageContent(url, model);
+      // Generate content with deep research flag
+      const html = await generatePageContent(url, model, deepResearch);
       
-      setPageData({
-        url,
-        content: html,
-        title: url,
-        isLoading: false,
-        generatedBy: model
-      });
+      if (currentRequestRef.current === requestId) {
+        setPageData({
+          url,
+          content: html,
+          title: url,
+          isLoading: false,
+          generatedBy: model
+        });
+      }
     } catch (err) {
-      console.error(err);
+      if (currentRequestRef.current === requestId) {
+        console.error(err);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        
+        if (errorMessage.includes('429') || errorMessage.includes('quota') || errorMessage.includes('RESOURCE_EXHAUSTED') || errorMessage.includes('Requested entity was not found')) {
+            setHasKey(false);
+        } else {
+            const errorHtml = `
+              <!DOCTYPE html>
+              <html>
+              <head><script src="https://cdn.tailwindcss.com"></script></head>
+              <body class="bg-[#050505] text-white flex items-center justify-center min-h-screen p-10 font-sans">
+                <div class="max-w-md w-full p-8 rounded-3xl bg-white/5 border border-white/10 backdrop-blur-3xl shadow-[0_0_50px_rgba(239,68,68,0.1)]">
+                    <div class="w-16 h-16 bg-red-500/10 text-red-500 rounded-2xl flex items-center justify-center mb-6">
+                        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                    </div>
+                    <h1 class="text-2xl font-bold mb-2">Simulated Reality Halted</h1>
+                    <p class="text-gray-400 text-sm mb-6 leading-relaxed">${errorMessage}</p>
+                    <button onclick="window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: '${url}' }, '*')" class="w-full py-3 bg-red-600 hover:bg-red-500 rounded-xl transition-all font-semibold shadow-lg shadow-red-600/20">Sync Reality</button>
+                </div>
+              </body>
+              </html>
+            `;
+            setPageData({
+              url,
+              content: errorHtml,
+              title: 'Error',
+              isLoading: false,
+              generatedBy: model
+            });
+        }
+      }
     } finally {
-      setLoading(false);
+      if (currentRequestRef.current === requestId) {
+        setLoading(false);
+      }
     }
-  }, [history, historyIndex, model]);
+  }, [history, historyIndex, model, deepResearch]);
 
   // Handle iframe navigation requests (relative URL resolution)
   const handleIframeNavigate = (targetUrl: string) => {
     let finalUrl = targetUrl;
-    
     if (targetUrl.startsWith('/')) {
        try {
          const currentObj = new URL(currentUrl.startsWith('http') ? currentUrl : `https://${currentUrl}`);
@@ -123,19 +177,15 @@ const App: React.FC = () => {
          finalUrl = targetUrl;
        }
     }
-    
     navigateTo(finalUrl);
   };
 
-  // Resume Session Effect
   const hasResumed = useRef(false);
   useEffect(() => {
     if (!hasResumed.current && currentUrl && !pageData) {
       hasResumed.current = true;
-      // Re-generate the page content for the restored URL
       navigateTo(currentUrl, true);
     } else if (!currentUrl && loading) {
-        // Edge case: Loading was true but no URL (e.g. corrupt history), stop loading
         setLoading(false);
     }
   }, [currentUrl, navigateTo, pageData, loading]);
@@ -149,6 +199,20 @@ const App: React.FC = () => {
     }
   };
 
+  const handleForward = () => {
+    if (historyIndex < history.length - 1) {
+      const newIndex = historyIndex + 1;
+      setHistoryIndex(newIndex);
+      const nextItem = history[newIndex];
+      navigateTo(nextItem.url, true);
+    }
+  };
+
+  const handleStop = () => {
+    currentRequestRef.current = 0;
+    setLoading(false);
+  };
+
   const handleReload = () => {
     if (currentUrl) {
       navigateTo(currentUrl, true);
@@ -157,13 +221,8 @@ const App: React.FC = () => {
 
   const handleDownload = () => {
     if (!pageData) return;
-    
-    // Create filename from title or URL
     let filename = (pageData.title || 'page').replace(/^https?:\/\//, '').replace(/[^a-z0-9\.\-_]/gi, '_');
-    if (!filename.toLowerCase().endsWith('.html')) {
-        filename += '.html';
-    }
-
+    if (!filename.toLowerCase().endsWith('.html')) filename += '.html';
     const blob = new Blob([pageData.content], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -195,7 +254,11 @@ const App: React.FC = () => {
       });
     } catch (e) {
       console.error(e);
-      throw e; // Propagate to DevTools component to show error
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      if (errorMessage.includes('429') || errorMessage.includes('quota') || errorMessage.includes('RESOURCE_EXHAUSTED') || errorMessage.includes('Requested entity was not found')) {
+          setHasKey(false);
+      }
+      throw e;
     } finally {
       setIsRefining(false);
     }
@@ -203,7 +266,6 @@ const App: React.FC = () => {
 
   const handleToggleBookmark = () => {
     if (!currentUrl) return;
-
     const exists = bookmarks.some(b => b.url === currentUrl);
     if (exists) {
         setBookmarks(prev => prev.filter(b => b.url !== currentUrl));
@@ -217,6 +279,68 @@ const App: React.FC = () => {
     }
   };
 
+  const handleClearHistory = () => {
+    setHistory([]);
+    setHistoryIndex(-1);
+    setCurrentUrl('');
+    setPageData(null);
+  };
+
+  const handleClearBookmarks = () => {
+    setBookmarks([]);
+  };
+
+  const handleSelectKey = async () => {
+    if (window.aistudio && window.aistudio.openSelectKey) {
+      await window.aistudio.openSelectKey();
+      setHasKey(true);
+    }
+  };
+
+  const loadingMessages = [
+    "Synthesizing latent reality...",
+    "Injecting architectural logic...",
+    "Synchronizing interactive nodes...",
+    "Simulating physics engine...",
+    "Polishing creative facets...",
+    "Deep Researching context..."
+  ];
+  const [loadingMsgIdx, setLoadingMsgIdx] = useState(0);
+
+  useEffect(() => {
+    let interval: any;
+    if (loading) {
+      interval = setInterval(() => {
+        setLoadingMsgIdx(prev => (prev + 1) % loadingMessages.length);
+      }, 2000);
+    }
+    return () => clearInterval(interval);
+  }, [loading]);
+
+  if (!hasKey) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen w-screen bg-[#050505] text-white">
+        <div className="max-w-md w-full p-8 rounded-3xl bg-white/5 border border-white/10 backdrop-blur-3xl text-center shadow-[0_0_50px_rgba(59,130,246,0.1)]">
+          <div className="w-16 h-16 bg-blue-500/10 text-blue-500 rounded-2xl flex items-center justify-center mb-6 mx-auto">
+            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
+          </div>
+          <h1 className="text-2xl font-bold mb-4">API Key Required</h1>
+          <p className="text-gray-400 mb-8 text-sm leading-relaxed">
+            To use InfiniteWeb and avoid rate limits, please select your Google Cloud API key.
+            <br/><br/>
+            <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 transition-colors underline underline-offset-4">Learn more about billing</a>
+          </p>
+          <button
+            onClick={handleSelectKey}
+            className="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl transition-all font-semibold shadow-lg shadow-blue-600/20"
+          >
+            Select API Key
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen w-screen bg-[#050505]">
       <AddressBar 
@@ -225,33 +349,52 @@ const App: React.FC = () => {
         model={model}
         onNavigate={(url) => navigateTo(url)}
         onBack={handleBack}
+        onForward={handleForward}
         onReload={handleReload}
+        onStop={handleStop}
         onDownload={handleDownload}
         canDownload={!!pageData && !loading}
         onSetModel={setModel}
         canGoBack={historyIndex > 0}
+        canGoForward={historyIndex < history.length - 1}
         onToggleHistory={() => setIsHistoryOpen(!isHistoryOpen)}
         onToggleDevTools={() => setIsDevToolsOpen(!isDevToolsOpen)}
         isDevToolsOpen={isDevToolsOpen}
         isBookmarked={bookmarks.some(b => b.url === currentUrl)}
         onToggleBookmark={handleToggleBookmark}
+        isDeepResearch={deepResearch}
+        onToggleDeepResearch={() => setDeepResearch(!deepResearch)}
       />
 
       <div className="flex-1 relative overflow-hidden flex flex-row">
-        {/* Main Viewport Container */}
         <div className="flex-1 relative flex flex-col h-full overflow-hidden">
-          {loading && (
-            <div className="absolute top-0 left-0 w-full z-10 h-full pointer-events-none">
-              <div className="h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 animate-pulse-slow w-full"></div>
-              <div className="absolute inset-0 h-full bg-black/50 backdrop-blur-sm flex items-center justify-center flex-col gap-4 pointer-events-auto">
-                  <div className="flex items-center gap-3">
-                    <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms'}}></div>
-                    <div className="w-3 h-3 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '150ms'}}></div>
-                    <div className="w-3 h-3 bg-pink-500 rounded-full animate-bounce" style={{ animationDelay: '300ms'}}></div>
-                  </div>
-                  <div className="font-mono text-sm text-white/80 animate-pulse">
-                    {model === ModelTier.PRO ? 'Restoring Reality...' : 'Resuming Dream...'}
-                  </div>
+          {loading && !pageData && (
+            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/90 backdrop-blur-3xl">
+              <div className="relative w-48 h-1 bg-white/10 rounded-full overflow-hidden mb-6">
+                <div className="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 animate-[loading-progress_2s_ease-in-out_infinite] w-full transform -translate-x-full"></div>
+              </div>
+              <div className="flex flex-col items-center gap-2">
+                <p className="text-sm font-mono text-white/60 tracking-widest uppercase animate-pulse">
+                  {loadingMessages[loadingMsgIdx]}
+                </p>
+                {deepResearch && (
+                    <p className="text-[10px] font-mono text-purple-400 uppercase tracking-tighter">Deep Thinking Enabled (+ Latency)</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {loading && pageData && (
+            <div className="absolute top-0 left-0 right-0 z-50 pointer-events-none">
+              <div className="h-1 bg-white/10 w-full overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 animate-[loading-progress_2s_ease-in-out_infinite] w-full transform -translate-x-full"></div>
+              </div>
+              <div className="absolute top-4 right-4 bg-[#0a0a0a]/90 backdrop-blur-md border border-white/10 rounded-xl p-3 flex items-center gap-3 shadow-2xl pointer-events-auto">
+                 <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                 <div className="flex flex-col">
+                    <span className="text-xs font-mono text-white/80">{loadingMessages[loadingMsgIdx]}</span>
+                    {deepResearch && <span className="text-[9px] text-purple-400 uppercase tracking-wider">Deep Research Active</span>}
+                 </div>
               </div>
             </div>
           )}
@@ -262,6 +405,8 @@ const App: React.FC = () => {
             bookmarks={bookmarks}
             onNavigate={navigateTo}
             onClose={() => setIsHistoryOpen(false)}
+            onClearHistory={handleClearHistory}
+            onClearBookmarks={handleClearBookmarks}
           />
 
           {pageData && !loading ? (
@@ -275,7 +420,6 @@ const App: React.FC = () => {
           )}
         </div>
 
-        {/* DevTools Panel */}
         {isDevToolsOpen && pageData && (
           <DevToolsPanel 
             isOpen={isDevToolsOpen}
@@ -284,9 +428,17 @@ const App: React.FC = () => {
             onApplyCode={handleManualCodeUpdate}
             onAiRefine={handleAiRefine}
             isGenerating={isRefining}
+            onClose={() => setIsDevToolsOpen(false)}
           />
         )}
       </div>
+      <style>{`
+        @keyframes loading-progress {
+          0% { transform: translateX(-100%); }
+          50% { transform: translateX(0%); }
+          100% { transform: translateX(100%); }
+        }
+      `}</style>
     </div>
   );
 };

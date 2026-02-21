@@ -3,6 +3,15 @@ export enum ModelTier {
   PRO = 'gemini-3-pro-preview',
 }
 
+declare global {
+  interface Window {
+    aistudio?: {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    };
+  }
+}
+
 export interface HistoryItem {
   url: string;
   timestamp: number;

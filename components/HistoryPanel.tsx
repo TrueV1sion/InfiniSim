@@ -7,9 +7,11 @@ interface HistoryPanelProps {
   bookmarks: Bookmark[];
   onNavigate: (url: string) => void;
   onClose: () => void;
+  onClearHistory: () => void;
+  onClearBookmarks: () => void;
 }
 
-const HistoryPanel: React.FC<HistoryPanelProps> = ({ isOpen, history, bookmarks, onNavigate, onClose }) => {
+const HistoryPanel: React.FC<HistoryPanelProps> = ({ isOpen, history, bookmarks, onNavigate, onClose, onClearHistory, onClearBookmarks }) => {
   const [activeTab, setActiveTab] = useState<'history' | 'bookmarks'>('history');
 
   return (
@@ -33,9 +35,17 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ isOpen, history, bookmarks,
                 Saved
              </button>
         </div>
-        <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors p-1 hover:bg-white/10 rounded mb-2">
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-        </button>
+        <div className="flex items-center gap-2 mb-2">
+            {activeTab === 'history' && history.length > 0 && (
+                <button onClick={onClearHistory} className="text-[10px] uppercase tracking-wider text-red-400 hover:text-red-300 transition-colors px-2 py-1 rounded hover:bg-red-500/10">Clear</button>
+            )}
+            {activeTab === 'bookmarks' && bookmarks.length > 0 && (
+                <button onClick={onClearBookmarks} className="text-[10px] uppercase tracking-wider text-red-400 hover:text-red-300 transition-colors px-2 py-1 rounded hover:bg-red-500/10">Clear</button>
+            )}
+            <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors p-1 hover:bg-white/10 rounded">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+        </div>
       </div>
       
       <div className="flex-1 overflow-y-auto p-2">

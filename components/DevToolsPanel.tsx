@@ -8,6 +8,7 @@ interface DevToolsPanelProps {
   onApplyCode: (newCode: string) => void;
   onAiRefine: (instruction: string) => Promise<void>;
   isGenerating: boolean;
+  onClose: () => void;
 }
 
 interface ConsoleLog {
@@ -23,7 +24,8 @@ const DevToolsPanel: React.FC<DevToolsPanelProps> = ({
   model,
   onApplyCode,
   onAiRefine,
-  isGenerating
+  isGenerating,
+  onClose
 }) => {
   const [activeTab, setActiveTab] = useState<'code' | 'ai'>('ai');
   const [localCode, setLocalCode] = useState(code);
@@ -335,7 +337,7 @@ const DevToolsPanel: React.FC<DevToolsPanelProps> = ({
   return (
     <div className="w-[500px] flex flex-col border-l border-glassBorder bg-[#0a0a0a] h-full shadow-2xl transition-all duration-300">
       {/* Tabs */}
-      <div className="flex border-b border-glassBorder bg-[#0f0f0f]">
+      <div className="flex border-b border-glassBorder bg-[#0f0f0f] items-center pr-2">
         <button
           onClick={() => setActiveTab('ai')}
           className={`flex-1 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
@@ -358,6 +360,9 @@ const DevToolsPanel: React.FC<DevToolsPanelProps> = ({
                 {issues.size + consoleLogs.filter(l => l.level === 'error').length}
             </span>
           )}
+        </button>
+        <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors p-1.5 hover:bg-white/10 rounded-md ml-2">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
       </div>
 

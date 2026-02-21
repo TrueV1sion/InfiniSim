@@ -1,11 +1,12 @@
 import React from 'react';
 
 const SUGGESTIONS = [
-  { url: "mars-colony-dashboard.org", label: "Mars Base Control" },
-  { url: "interdimensional-travel-agency.com", label: "Travel Agency" },
-  { url: "retro-90s-geocities.net", label: "90s Personal Site" },
-  { url: "quantum-weather-forecast.io", label: "Quantum Weather" },
-  { url: "ai-civilization-simulator.gov", label: "Civ Sim Dashboard" }
+  { url: "cyberpunk-arena-3d.play", label: "3D Cyberpunk Arena", icon: "🎮" },
+  { url: "mars-colony-dashboard.org", label: "Mars Base Control", icon: "🚀" },
+  { url: "interdimensional-travel-agency.com", label: "Travel Agency", icon: "🌌" },
+  { url: "retro-90s-geocities.net", label: "90s Personal Site", icon: "💾" },
+  { url: "quantum-weather-forecast.io", label: "Quantum Weather", icon: "⚡" },
+  { url: "ai-civilization-simulator.gov", label: "Civ Sim Dashboard", icon: "🤖" }
 ];
 
 interface EmptyStateProps {
@@ -22,7 +23,7 @@ const EmptyState: React.FC<EmptyStateProps> = ({ onNavigate }) => {
                 </h1>
                 <p className="text-xl text-gray-400 font-light leading-relaxed">
                     The browser for the latent space. <br/>
-                    Powered by Gemini 3.0 Architect Engine.
+                    Powered by Gemini 3.0 & PlayCanvas Architect.
                 </p>
             </div>
 
@@ -33,9 +34,12 @@ const EmptyState: React.FC<EmptyStateProps> = ({ onNavigate }) => {
                         onClick={() => onNavigate(s.url)}
                         className="group p-5 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-blue-500/50 transition-all duration-500 flex items-center justify-between shadow-lg hover:shadow-blue-500/10"
                     >
-                        <div>
-                            <div className="font-mono text-[10px] text-blue-400/80 mb-1 uppercase tracking-widest">{s.url}</div>
-                            <div className="font-medium text-gray-100 text-lg">{s.label}</div>
+                        <div className="flex items-center gap-4">
+                            <span className="text-2xl grayscale group-hover:grayscale-0 transition-all duration-300">{s.icon}</span>
+                            <div>
+                                <div className="font-mono text-[10px] text-blue-400/80 mb-1 uppercase tracking-widest">{s.url}</div>
+                                <div className="font-medium text-gray-100 text-lg">{s.label}</div>
+                            </div>
                         </div>
                         <svg className="w-6 h-6 text-gray-600 group-hover:text-white transition-all transform group-hover:translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
                     </button>
@@ -50,6 +54,10 @@ const EmptyState: React.FC<EmptyStateProps> = ({ onNavigate }) => {
                 <div className="flex items-center gap-3">
                     <div className="w-2.5 h-2.5 rounded-full bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.5)]"></div>
                     <span className="text-xs font-mono tracking-widest uppercase">Gemini 3.0 Pro</span>
+                </div>
+                <div className="flex items-center gap-3">
+                    <div className="w-2.5 h-2.5 rounded-full bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]"></div>
+                    <span className="text-xs font-mono tracking-widest uppercase">PlayCanvas Engine</span>
                 </div>
             </div>
         </div>
