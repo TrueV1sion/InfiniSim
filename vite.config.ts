@@ -18,6 +18,17 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
+      },
+      build: {
+        rollupOptions: {
+          output: {
+            manualChunks: {
+              'monaco-editor': ['@monaco-editor/react'],
+              'motion': ['motion'],
+              'supabase': ['@supabase/supabase-js'],
+            }
+          }
+        }
       }
     };
 });

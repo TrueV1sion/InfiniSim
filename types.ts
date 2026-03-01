@@ -13,23 +13,36 @@ declare global {
 }
 
 export interface HistoryItem {
+  id?: string;
   url: string;
   timestamp: number;
+  thumbnail?: string;
 }
 
 export interface Bookmark {
+  id?: string;
   url: string;
   title: string;
   timestamp: number;
+  thumbnail?: string;
 }
 
 export interface WebPage {
   url: string;
-  content: string; // The full HTML string
+  content: string;
   title: string;
   isLoading: boolean;
   error?: string;
   generatedBy: ModelTier;
+}
+
+export interface CachedPage {
+  id?: string;
+  url: string;
+  content: string;
+  model: ModelTier;
+  deep_research: boolean;
+  created_at: number;
 }
 
 export interface GenerationConfig {
@@ -43,7 +56,7 @@ export interface ChatMessage {
   timestamp: number;
 }
 
-export type NavigationAction = 
+export type NavigationAction =
   | { type: 'NAVIGATE'; url: string }
   | { type: 'BACK' }
   | { type: 'FORWARD' }
