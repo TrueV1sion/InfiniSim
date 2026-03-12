@@ -6,22 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^1.33.0",
-    "@monaco-editor/react": "^4.7.0",
-    "@supabase/supabase-js": "^2.98.0",
-    "cmdk": "^1.1.1",
-    "html2canvas": "^1.4.1",
-    "motion": "^12.34.3",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "sonner": "^2.0.7",
-    "zustand": "^5.0.11"
+    "@google/genai": "^1.33.0"
   },
   "devDependencies": {
-    "@types/html2canvas": "^0.5.35",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
