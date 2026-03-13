@@ -1,0 +1,24 @@
+{
+  "entities": {
+    "UserData": {
+      "title": "UserData",
+      "description": "User's browser data including bookmarks, history, and virtual state",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "bookmarks": { "type": "array", "items": { "type": "object" } },
+        "history": { "type": "array", "items": { "type": "object" } },
+        "downloads": { "type": "array", "items": { "type": "object" } },
+        "virtualState": { "type": "object" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["uid"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "UserData",
+      "description": "User's browser data"
+    }
+  }
+}

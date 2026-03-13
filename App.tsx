@@ -7,6 +7,9 @@ import DevToolsPanel from './components/DevToolsPanel';
 import DownloadsPanel from './components/DownloadsPanel';
 import { ModelTier, WebPage, HistoryItem, Bookmark, DownloadItem } from './types';
 import { generatePageContent, refinePageContent } from './services/geminiService';
+import { auth, db, signInWithGoogle, logout } from './firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
 
 // Storage Helpers
 const STORAGE_PREFIX = 'infiniteWeb_';
@@ -78,6 +81,10 @@ const App: React.FC = () => {
   const [hasKey, setHasKey] = useState<boolean>(true);
   const [loadingProgress, setLoadingProgress] = useState(0);
 
+  // Firebase Auth State
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+
   // Persistence Effects
   useEffect(() => {
     const checkKey = async () => {
@@ -88,6 +95,53 @@ const App: React.FC = () => {
     };
     checkKey();
   }, []);
+
+  // Firebase Auth Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      setIsAuthReady(true);
+      
+      if (currentUser) {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+          if (userDoc.exists()) {
+            const data = userDoc.data();
+            if (data.history) setHistory(data.history);
+            if (data.bookmarks) setBookmarks(data.bookmarks);
+            if (data.downloads) setDownloads(data.downloads);
+            if (data.virtualState) setVirtualState(data.virtualState);
+          }
+        } catch (error) {
+          console.error("Error fetching user data:", error);
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Sync to Firestore when data changes
+  useEffect(() => {
+    if (user && isAuthReady) {
+      const syncData = async () => {
+        try {
+          await setDoc(doc(db, 'users', user.uid), {
+            uid: user.uid,
+            history,
+            bookmarks,
+            downloads,
+            virtualState,
+            updatedAt: Date.now()
+          }, { merge: true });
+        } catch (error) {
+          console.error("Error syncing to Firestore:", error);
+        }
+      };
+      // Debounce sync slightly
+      const timeoutId = setTimeout(syncData, 1000);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [history, bookmarks, downloads, virtualState, user, isAuthReady]);
 
   useEffect(() => {
     setStored('history', history);
@@ -485,6 +539,9 @@ const App: React.FC = () => {
         onHome={handleHome}
         onToggleDownloads={() => setIsDownloadsOpen(!isDownloadsOpen)}
         isDownloadsOpen={isDownloadsOpen}
+        user={user}
+        onLogin={signInWithGoogle}
+        onLogout={logout}
       />
 
       <div className="flex-1 relative overflow-hidden flex flex-row">
