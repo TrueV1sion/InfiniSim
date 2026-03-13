@@ -23,6 +23,16 @@ export interface Bookmark {
   timestamp: number;
 }
 
+export interface DownloadItem {
+  id: string;
+  filename: string;
+  url: string;
+  timestamp: number;
+  size?: number;
+  status: 'completed' | 'failed' | 'downloading';
+  blobUrl?: string;
+}
+
 export interface WebPage {
   url: string;
   content: string; // The full HTML string

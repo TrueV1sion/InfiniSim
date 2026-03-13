@@ -4,7 +4,8 @@ import BrowserViewport from './components/BrowserViewport';
 import EmptyState from './components/EmptyState';
 import HistoryPanel from './components/HistoryPanel';
 import DevToolsPanel from './components/DevToolsPanel';
-import { ModelTier, WebPage, HistoryItem, Bookmark } from './types';
+import DownloadsPanel from './components/DownloadsPanel';
+import { ModelTier, WebPage, HistoryItem, Bookmark, DownloadItem } from './types';
 import { generatePageContent, refinePageContent } from './services/geminiService';
 
 // Storage Helpers
@@ -37,6 +38,10 @@ const App: React.FC = () => {
     getStored('bookmarks', [])
   );
   
+  const [downloads, setDownloads] = useState<DownloadItem[]>(() =>
+    getStored('downloads', [])
+  );
+  
   const [historyIndex, setHistoryIndex] = useState<number>(() => 
     getStored('index', -1)
   );
@@ -63,6 +68,7 @@ const App: React.FC = () => {
   const [pageData, setPageData] = useState<WebPage | null>(null);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isDevToolsOpen, setIsDevToolsOpen] = useState(false);
+  const [isDownloadsOpen, setIsDownloadsOpen] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
   const currentRequestRef = useRef<number>(0);
   const [hasKey, setHasKey] = useState<boolean>(true);
@@ -86,6 +92,10 @@ const App: React.FC = () => {
   useEffect(() => {
     setStored('bookmarks', bookmarks);
   }, [bookmarks]);
+
+  useEffect(() => {
+    setStored('downloads', downloads);
+  }, [downloads]);
 
   useEffect(() => {
     setStored('index', historyIndex);
@@ -242,13 +252,44 @@ const App: React.FC = () => {
     if (!filename.toLowerCase().endsWith('.html')) filename += '.html';
     const blob = new Blob([pageData.content], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
+    
+    const newDownload: DownloadItem = {
+      id: Date.now().toString(),
+      filename,
+      url: currentUrl,
+      timestamp: Date.now(),
+      size: blob.size,
+      status: 'completed',
+      blobUrl: url
+    };
+    
+    setDownloads(prev => [newDownload, ...prev]);
+    setIsDownloadsOpen(true);
+
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  };
+
+  const handleClearDownloads = () => {
+    downloads.forEach(d => {
+      if (d.blobUrl) URL.revokeObjectURL(d.blobUrl);
+    });
+    setDownloads([]);
+  };
+
+  const handleOpenDownload = (download: DownloadItem) => {
+    if (download.blobUrl) {
+      const a = document.createElement('a');
+      a.href = download.blobUrl;
+      a.download = download.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
   };
 
   const handleManualCodeUpdate = (newCode: string) => {
@@ -396,6 +437,8 @@ const App: React.FC = () => {
         history={history}
         bookmarks={bookmarks}
         onHome={handleHome}
+        onToggleDownloads={() => setIsDownloadsOpen(!isDownloadsOpen)}
+        isDownloadsOpen={isDownloadsOpen}
       />
 
       <div className="flex-1 relative overflow-hidden flex flex-row">
@@ -446,6 +489,17 @@ const App: React.FC = () => {
             onClearHistory={handleClearHistory}
             onClearBookmarks={handleClearBookmarks}
           />
+
+          {isDownloadsOpen && (
+            <div className="absolute top-0 right-0 bottom-0 z-40">
+              <DownloadsPanel
+                downloads={downloads}
+                onClose={() => setIsDownloadsOpen(false)}
+                onClear={handleClearDownloads}
+                onOpen={handleOpenDownload}
+              />
+            </div>
+          )}
 
           {pageData && !loading ? (
             <BrowserViewport 

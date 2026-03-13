@@ -25,6 +25,8 @@ interface AddressBarProps {
   history: HistoryItem[];
   bookmarks: Bookmark[];
   onHome: () => void;
+  onToggleDownloads: () => void;
+  isDownloadsOpen: boolean;
 }
 
 const AddressBar: React.FC<AddressBarProps> = ({
@@ -50,7 +52,9 @@ const AddressBar: React.FC<AddressBarProps> = ({
   onToggleDeepResearch,
   history,
   bookmarks,
-  onHome
+  onHome,
+  onToggleDownloads,
+  isDownloadsOpen
 }) => {
   const [inputVal, setInputVal] = useState(currentUrl);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -273,6 +277,16 @@ const AddressBar: React.FC<AddressBarProps> = ({
             disabled={!canDownload}
             className="p-2 rounded-xl hover:bg-white/5 text-gray-500 hover:text-white transition-all disabled:opacity-10"
             title="Download Offline HTML"
+            >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+            </button>
+
+            <button
+            onClick={onToggleDownloads}
+            className={`p-2 rounded-xl transition-all ${
+                isDownloadsOpen ? 'bg-white/10 text-white shadow-inner' : 'hover:bg-white/5 text-gray-500 hover:text-white'
+            }`}
+            title="Downloads"
             >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
             </button>
