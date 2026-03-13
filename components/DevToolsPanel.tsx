@@ -53,6 +53,7 @@ const DevToolsPanel: React.FC<DevToolsPanelProps> = ({
   const lineNumbersRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const consoleEndRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
 
   // --- Auto-Save Logic ---
   useEffect(() => {
@@ -298,16 +299,22 @@ const DevToolsPanel: React.FC<DevToolsPanelProps> = ({
     setHasDraft(false);
   };
 
-  const handleChatSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatInput.trim() || isGenerating) return;
+  const handleChatSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const content = editorRef.current?.innerHTML || '';
+    const textContent = editorRef.current?.textContent || '';
+    if (!textContent.trim() || isGenerating) return;
 
-    const userMsg: ChatMessage = { role: 'user', content: chatInput, timestamp: Date.now() };
+    const userMsg: ChatMessage = { role: 'user', content: content, timestamp: Date.now() };
     setChatHistory(prev => [...prev, userMsg]);
+    
+    if (editorRef.current) {
+      editorRef.current.innerHTML = '';
+    }
     setChatInput('');
 
     try {
-      await onAiRefine(userMsg.content);
+      await onAiRefine(content);
       const aiMsg: ChatMessage = { 
         role: 'assistant', 
         content: `I've updated the page based on your request. Check the preview.`, 
@@ -321,6 +328,13 @@ const DevToolsPanel: React.FC<DevToolsPanelProps> = ({
         timestamp: Date.now() 
       };
       setChatHistory(prev => [...prev, errorMsg]);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleChatSubmit();
     }
   };
 
@@ -380,9 +394,8 @@ const DevToolsPanel: React.FC<DevToolsPanelProps> = ({
                       ? 'bg-blue-600 text-white rounded-br-none' 
                       : 'bg-[#1a1a1a] text-gray-200 border border-glassBorder rounded-bl-none'
                   }`}
-                >
-                  {msg.content}
-                </div>
+                  dangerouslySetInnerHTML={{ __html: msg.content }}
+                />
               </div>
             ))}
             {isGenerating && (
@@ -396,25 +409,48 @@ const DevToolsPanel: React.FC<DevToolsPanelProps> = ({
             <div ref={chatEndRef} />
           </div>
 
-          <form onSubmit={handleChatSubmit} className="p-4 border-t border-glassBorder bg-[#0f0f0f]">
+          <div className="p-3 border-t border-glassBorder bg-[#0f0f0f] flex flex-col gap-2">
+            <div className="flex gap-1 px-1">
+              <button 
+                type="button"
+                onClick={() => document.execCommand('bold', false)}
+                className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 rounded transition-colors font-serif font-bold"
+                title="Bold"
+              >
+                B
+              </button>
+              <button 
+                type="button"
+                onClick={() => document.execCommand('italic', false)}
+                className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 rounded transition-colors font-serif italic"
+                title="Italic"
+              >
+                I
+              </button>
+            </div>
             <div className="relative">
-              <input
-                type="text"
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                placeholder="Ask AI to make changes..."
-                disabled={isGenerating}
-                className="w-full bg-[#1a1a1a] text-white rounded-lg pl-4 pr-12 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 border border-glassBorder placeholder-gray-600"
+              <div
+                ref={editorRef}
+                contentEditable={!isGenerating}
+                onKeyDown={handleKeyDown}
+                onInput={(e) => setChatInput(e.currentTarget.textContent || '')}
+                className="w-full bg-[#1a1a1a] text-white rounded-lg pl-4 pr-12 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 border border-glassBorder min-h-[46px] max-h-[150px] overflow-y-auto whitespace-pre-wrap break-words"
               />
+              {!chatInput && (
+                <div className="absolute left-4 top-3 text-gray-600 pointer-events-none text-sm">
+                  Ask AI to make changes...
+                </div>
+              )}
               <button
-                type="submit"
+                type="button"
+                onClick={() => handleChatSubmit()}
                 disabled={!chatInput.trim() || isGenerating}
-                className="absolute right-2 top-2 p-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-500 disabled:opacity-50"
+                className="absolute right-2 bottom-2 p-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-500 disabled:opacity-50"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
               </button>
             </div>
-          </form>
+          </div>
         </div>
 
         {/* Code Tab */}

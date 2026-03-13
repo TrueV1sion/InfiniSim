@@ -143,8 +143,35 @@ const App: React.FC = () => {
         console.error(err);
         const errorMessage = err instanceof Error ? err.message : String(err);
         
-        if (errorMessage.includes('429') || errorMessage.includes('quota') || errorMessage.includes('RESOURCE_EXHAUSTED') || errorMessage.includes('Requested entity was not found')) {
+        if (errorMessage.includes('Requested entity was not found')) {
             setHasKey(false);
+        } else if (errorMessage.includes('429') || errorMessage.includes('quota') || errorMessage.includes('RESOURCE_EXHAUSTED')) {
+            const errorHtml = `
+              <!DOCTYPE html>
+              <html>
+              <head><script src="https://cdn.tailwindcss.com"></script></head>
+              <body class="bg-[#050505] text-white flex items-center justify-center min-h-screen p-10 font-sans">
+                <div class="max-w-md w-full p-8 rounded-3xl bg-white/5 border border-white/10 backdrop-blur-3xl shadow-[0_0_50px_rgba(239,68,68,0.1)]">
+                    <div class="w-16 h-16 bg-red-500/10 text-red-500 rounded-2xl flex items-center justify-center mb-6">
+                        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                    </div>
+                    <h1 class="text-2xl font-bold mb-2">Quota Exceeded</h1>
+                    <p class="text-gray-400 text-sm mb-6 leading-relaxed">You have exceeded the quota for the current model (${model}). Please switch to the Flash model in the top right, or provide your own API key.</p>
+                    <div class="flex flex-col gap-3">
+                        <button onclick="window.parent.postMessage({ type: 'INFINITE_WEB_SELECT_KEY' }, '*')" class="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl transition-all font-semibold shadow-lg shadow-blue-600/20">Provide API Key</button>
+                        <button onclick="window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: '${url}' }, '*')" class="w-full py-3 bg-white/10 hover:bg-white/20 rounded-xl transition-all font-semibold">Retry</button>
+                    </div>
+                </div>
+              </body>
+              </html>
+            `;
+            setPageData({
+              url,
+              content: errorHtml,
+              title: 'Quota Exceeded',
+              isLoading: false,
+              generatedBy: model
+            });
         } else {
             const errorHtml = `
               <!DOCTYPE html>
@@ -313,8 +340,10 @@ const App: React.FC = () => {
     } catch (e) {
       console.error(e);
       const errorMessage = e instanceof Error ? e.message : String(e);
-      if (errorMessage.includes('429') || errorMessage.includes('quota') || errorMessage.includes('RESOURCE_EXHAUSTED') || errorMessage.includes('Requested entity was not found')) {
+      if (errorMessage.includes('Requested entity was not found')) {
           setHasKey(false);
+      } else if (errorMessage.includes('429') || errorMessage.includes('quota') || errorMessage.includes('RESOURCE_EXHAUSTED')) {
+          // Do not block the UI, just throw so DevToolsPanel can catch it
       }
       throw e;
     } finally {
@@ -506,6 +535,7 @@ const App: React.FC = () => {
               htmlContent={pageData.content} 
               title={pageData.title}
               onNavigate={handleIframeNavigate}
+              onSelectKey={handleSelectKey}
             />
           ) : !loading && (
             <EmptyState onNavigate={(url) => navigateTo(url)} />

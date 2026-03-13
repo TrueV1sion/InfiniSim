@@ -4,9 +4,10 @@ interface BrowserViewportProps {
   htmlContent: string;
   title: string;
   onNavigate: (url: string) => void;
+  onSelectKey?: () => void;
 }
 
-const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, onNavigate }) => {
+const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, onNavigate, onSelectKey }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
@@ -31,12 +32,14 @@ const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, o
       if (event.data && event.data.type === 'INFINITE_WEB_NAVIGATE') {
         const targetUrl = event.data.url;
         onNavigate(targetUrl);
+      } else if (event.data && event.data.type === 'INFINITE_WEB_SELECT_KEY' && onSelectKey) {
+        onSelectKey();
       }
     };
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [onNavigate]);
+  }, [onNavigate, onSelectKey]);
 
   return (
     <div className="flex-1 w-full h-full relative bg-white">
