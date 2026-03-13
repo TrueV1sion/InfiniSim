@@ -5,6 +5,38 @@ import { ModelTier } from "../types";
 const INJECTED_SCRIPT = `
 <script>
   (function() {
+    function getBrowserState() {
+      try {
+        return {
+          localStorage: Object.assign({}, window.localStorage),
+          sessionStorage: Object.assign({}, window.sessionStorage),
+          cookie: document.cookie
+        };
+      } catch(e) { return {}; }
+    }
+
+    function syncState() {
+      window.parent.postMessage({ type: 'INFINITE_WEB_STATE_UPDATE', state: getBrowserState() }, '*');
+    }
+
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(key, value) {
+      originalSetItem.apply(this, arguments);
+      syncState();
+    };
+    const originalRemoveItem = Storage.prototype.removeItem;
+    Storage.prototype.removeItem = function(key) {
+      originalRemoveItem.apply(this, arguments);
+      syncState();
+    };
+    const originalClear = Storage.prototype.clear;
+    Storage.prototype.clear = function() {
+      originalClear.apply(this, arguments);
+      syncState();
+    };
+
+    document.addEventListener('change', syncState);
+
     // Intercept navigation
     document.addEventListener('click', function(e) {
       const link = e.target.closest('a');
@@ -12,7 +44,7 @@ const INJECTED_SCRIPT = `
         const href = link.getAttribute('href');
         if (href && href !== '#' && !href.startsWith('javascript:')) {
           e.preventDefault();
-          window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: href }, '*');
+          window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: href, state: getBrowserState() }, '*');
         }
       }
     }, true);
@@ -30,7 +62,7 @@ const INJECTED_SCRIPT = `
         }
         const queryStr = params.toString();
         const target = (action || window.location.pathname) + (queryStr ? '?' + queryStr : '');
-        window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: target }, '*');
+        window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: target, state: getBrowserState() }, '*');
       }
     });
 
@@ -95,21 +127,28 @@ const cleanHtml = (html: string) => {
 export const generatePageContent = async (
   url: string,
   model: ModelTier,
-  isDeepResearch: boolean = false
+  isDeepResearch: boolean = false,
+  virtualState?: any
 ): Promise<string> => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
   
+  const stateString = virtualState && Object.keys(virtualState).length > 0 
+    ? JSON.stringify(virtualState) 
+    : 'None';
+
   // Enhance the prompt with "environmental" cues to help the AI contextualize its "server" role
   const prompt = `
     [REQUEST_TYPE: SERVER_GET]
     [TARGET_URL: "${url}"]
-    [BROWSER_USER_AGENT: "InfiniteWeb/3.0 (LatentSpace; Interactive)"]
+    [BROWSER_USER_AGENT: "InfiniteWeb/4.0 (LatentSpace; Interactive)"]
     [DEEP_RESEARCH_MODE: ${isDeepResearch ? 'ENABLED' : 'DISABLED'}]
+    [CURRENT_BROWSER_STATE: ${stateString}]
     
     TASK: Execute the generation of the page at the target URL. 
+    CRITICAL STATE INSTRUCTION: If CURRENT_BROWSER_STATE is provided and contains data (e.g., localStorage, sessionStorage, cookies), you MUST render the page to reflect this state. For example, if the state indicates the user is logged in, render the authenticated dashboard/profile. If the state contains shopping cart items, render the cart with those items.
     ${isDeepResearch ? "CRITICAL: Perform deep architectural reasoning. Ensure every single JS component is flawless and robust. Optimize for maximum visual fidelity." : ""}
     If this is a known brand site, simulate its high-fidelity alternative universe version.
     If it is a tool or game, make it fully production-ready.

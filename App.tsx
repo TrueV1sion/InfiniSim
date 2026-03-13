@@ -50,6 +50,10 @@ const App: React.FC = () => {
     getStored('model', ModelTier.FLASH)
   );
 
+  const [virtualState, setVirtualState] = useState<any>(() =>
+    getStored('virtualState', {})
+  );
+
   const [deepResearch, setDeepResearch] = useState<boolean>(() =>
     getStored('deepResearch', false)
   );
@@ -109,14 +113,23 @@ const App: React.FC = () => {
     setStored('deepResearch', deepResearch);
   }, [deepResearch]);
 
+  useEffect(() => {
+    setStored('virtualState', virtualState);
+  }, [virtualState]);
+
   // Core navigation logic
-  const navigateTo = useCallback(async (url: string, isHistoryNav = false) => {
+  const navigateTo = useCallback(async (url: string, isHistoryNav = false, incomingState?: any) => {
     const requestId = Date.now();
     currentRequestRef.current = requestId;
 
     setLoading(true);
     setLoadingProgress(0);
     setCurrentUrl(url);
+
+    const stateToUse = incomingState || virtualState;
+    if (incomingState) {
+      setVirtualState(incomingState);
+    }
 
     if (!isHistoryNav) {
       const newHistory = history.slice(0, historyIndex + 1);
@@ -127,7 +140,7 @@ const App: React.FC = () => {
 
     try {
       // Generate content with deep research flag
-      const html = await generatePageContent(url, model, deepResearch);
+      const html = await generatePageContent(url, model, deepResearch, stateToUse);
       
       if (currentRequestRef.current === requestId) {
         setPageData({
@@ -209,10 +222,10 @@ const App: React.FC = () => {
         }, 300);
       }
     }
-  }, [history, historyIndex, model, deepResearch]);
+  }, [history, historyIndex, model, deepResearch, virtualState]);
 
   // Handle iframe navigation requests (relative URL resolution)
-  const handleIframeNavigate = (targetUrl: string) => {
+  const handleIframeNavigate = (targetUrl: string, state?: any) => {
     let finalUrl = targetUrl;
     if (targetUrl.startsWith('/')) {
        try {
@@ -222,7 +235,11 @@ const App: React.FC = () => {
          finalUrl = targetUrl;
        }
     }
-    navigateTo(finalUrl);
+    navigateTo(finalUrl, false, state);
+  };
+
+  const handleStateUpdate = (state: any) => {
+    setVirtualState(state);
   };
 
   const hasResumed = useRef(false);
@@ -536,6 +553,7 @@ const App: React.FC = () => {
               title={pageData.title}
               onNavigate={handleIframeNavigate}
               onSelectKey={handleSelectKey}
+              onStateUpdate={handleStateUpdate}
             />
           ) : !loading && (
             <EmptyState onNavigate={(url) => navigateTo(url)} />

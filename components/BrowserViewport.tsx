@@ -3,11 +3,12 @@ import React, { useEffect, useRef } from 'react';
 interface BrowserViewportProps {
   htmlContent: string;
   title: string;
-  onNavigate: (url: string) => void;
+  onNavigate: (url: string, state?: any) => void;
   onSelectKey?: () => void;
+  onStateUpdate?: (state: any) => void;
 }
 
-const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, onNavigate, onSelectKey }) => {
+const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, onNavigate, onSelectKey, onStateUpdate }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
@@ -31,15 +32,17 @@ const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, o
     const handleMessage = (event: MessageEvent) => {
       if (event.data && event.data.type === 'INFINITE_WEB_NAVIGATE') {
         const targetUrl = event.data.url;
-        onNavigate(targetUrl);
+        onNavigate(targetUrl, event.data.state);
       } else if (event.data && event.data.type === 'INFINITE_WEB_SELECT_KEY' && onSelectKey) {
         onSelectKey();
+      } else if (event.data && event.data.type === 'INFINITE_WEB_STATE_UPDATE' && onStateUpdate) {
+        onStateUpdate(event.data.state);
       }
     };
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [onNavigate, onSelectKey]);
+  }, [onNavigate, onSelectKey, onStateUpdate]);
 
   return (
     <div className="flex-1 w-full h-full relative bg-white">
