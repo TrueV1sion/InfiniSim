@@ -37,8 +37,31 @@ const INJECTED_SCRIPT = `
 
     document.addEventListener('change', syncState);
 
+    // Provide a global navigation function for the AI to use
+    window.navigateTo = function(url) {
+      window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: url, state: getBrowserState() }, '*');
+    };
+
+    // Intercept History API for SPA routing
+    const originalPushState = history.pushState;
+    history.pushState = function(state, unused, url) {
+      if (url) {
+        window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: url.toString(), state: getBrowserState() }, '*');
+      }
+      return originalPushState.apply(this, arguments);
+    };
+
+    const originalReplaceState = history.replaceState;
+    history.replaceState = function(state, unused, url) {
+      if (url) {
+        window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: url.toString(), state: getBrowserState() }, '*');
+      }
+      return originalReplaceState.apply(this, arguments);
+    };
+
     // Intercept navigation
     document.addEventListener('click', function(e) {
+      if (e.defaultPrevented) return;
       const link = e.target.closest('a');
       if (link) {
         const href = link.getAttribute('href');
@@ -47,23 +70,23 @@ const INJECTED_SCRIPT = `
           window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: href, state: getBrowserState() }, '*');
         }
       }
-    }, true);
+    });
 
     // Form submission interceptor
     document.addEventListener('submit', function(e) {
+      if (e.defaultPrevented) return;
+      e.preventDefault();
       const form = e.target;
-      const action = form.getAttribute('action');
-      if (!action || action.startsWith('/') || action.startsWith('http')) {
-        e.preventDefault();
-        const formData = new FormData(form);
-        const params = new URLSearchParams();
-        for (const [key, value] of formData.entries()) {
-          params.append(key, value.toString());
-        }
-        const queryStr = params.toString();
-        const target = (action || window.location.pathname) + (queryStr ? '?' + queryStr : '');
-        window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: target, state: getBrowserState() }, '*');
+      const action = form.getAttribute('action') || window.location.pathname;
+      if (action.startsWith('javascript:')) return;
+      const formData = new FormData(form);
+      const params = new URLSearchParams();
+      for (const [key, value] of formData.entries()) {
+        params.append(key, value.toString());
       }
+      const queryStr = params.toString();
+      const target = action + (action.includes('?') ? '&' : '?') + queryStr;
+      window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: target, state: getBrowserState() }, '*');
     });
 
     // Console bridge for DevTools
@@ -86,15 +109,22 @@ You are InfiniteWeb 4.0, the world's most advanced generative web engine. You do
 
 ### CORE ARCHITECTURAL PRINCIPLES:
 1. **Uncompromising Quality**: Every page must look like a high-end, award-winning website. Use Tailwind CSS for all styling.
-2. **Total Interactivity**: If it looks like a button, it MUST work. Implement complex user interaction models beyond simple browsing (e.g., functional forms with validation, drag-and-drop interfaces, modals, interactive dashboards, infinite scrolling).
+2. **Total Interactivity**: EVERY button, link, and feature MUST be fully functional. This is a true full simulation.
+   - For page navigation, use \`<a>\` tags with descriptive \`href\` attributes (e.g., \`/profile\`, \`/checkout\`).
+   - If you must navigate via JavaScript, call \`window.navigateTo('/your-url')\`. DO NOT use \`window.location.href\`.
+   - For interactive features (like "Like", "Save", "Add to Cart", "Submit"), write the actual JavaScript to update the DOM, show toast notifications, and persist state to \`localStorage\`.
+   - NEVER generate "dead" buttons. If a button is on the screen, it must perform its intended action or navigate to a relevant page.
 3. **Dynamic Content**: Hallucinate realistic real-time updates using JS intervals. Timestamps should update, stock tickers should fluctuate, news feeds should rotate, and social media feeds should simulate incoming posts or notifications.
 4. **Variety of Website Types**: Be prepared to generate highly authentic e-commerce platforms (with working carts), social media networks (with interactive feeds), news portals (with breaking news banners), SaaS dashboards, and immersive 3D experiences.
 5. **Realistic Network Latency**: Simulate realistic network latency *within* the generated page. Use skeleton loaders, spinners, or progress bars initially, then use \`setTimeout\` (e.g., 800ms - 2000ms) to "fetch" and reveal the actual content, making it feel like a real web application loading data from a server.
 6. **Library Ecosystem**: 
+   - UI/State: Use Alpine.js for lightweight, declarative interactivity like modals, tabs, and dropdowns (<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>).
    - Icons: Use Lucide Icons (<script src="https://unpkg.com/lucide@latest"></script> followed by lucide.createIcons()).
    - Animations: Use GSAP for cinematic transitions (<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>).
    - Charts: Use Chart.js for data visualization (<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>).
-   - 3D: Use PlayCanvas for immersive games/simulations (<script src="https://code.playcanvas.com/playcanvas-latest.js"></script>).
+   - Maps: Use Leaflet.js for interactive maps (<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" /><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>).
+   - 3D/WebGL: Use Three.js for creative 3D experiences (<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>) or PlayCanvas for full game engines (<script src="https://code.playcanvas.com/playcanvas-latest.js"></script>).
+   - 2D Physics: Use Matter.js for 2D physics simulations and games (<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>).
 
 ### GAME ENGINE (PLAYCANVAS) SPECIFICS:
 When a URL or prompt implies a game or 3D world:
