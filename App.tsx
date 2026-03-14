@@ -6,10 +6,10 @@ import HistoryPanel from './components/HistoryPanel';
 import DevToolsPanel from './components/DevToolsPanel';
 import DownloadsPanel from './components/DownloadsPanel';
 import { ModelTier, WebPage, HistoryItem, Bookmark, DownloadItem } from './types';
-import { generatePageContent, refinePageContent } from './services/geminiService';
+import { refinePageContent, generatePageContentStream, processAiImages, cleanHtml } from './services/geminiService';
 import { auth, db, signInWithGoogle, logout } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, getDoc, collection, addDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
 
 // Storage Helpers
 const STORAGE_PREFIX = 'infiniteWeb_';
@@ -193,13 +193,74 @@ const App: React.FC = () => {
     }
 
     try {
+      if (url === 'infinite://directory') {
+        const q = query(collection(db, 'published_sites'), orderBy('publishedAt', 'desc'), limit(50));
+        const querySnapshot = await getDocs(q);
+        const sites = querySnapshot.docs.map(doc => doc.data());
+        
+        const directoryHtml = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <script src="https://cdn.tailwindcss.com"></script>
+            <title>Infinite Directory</title>
+          </head>
+          <body class="bg-[#050505] text-white min-h-screen p-10 font-sans">
+            <div class="max-w-4xl mx-auto">
+              <h1 class="text-4xl font-bold mb-2 bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">Infinite Directory</h1>
+              <p class="text-gray-400 mb-10">Explore the simulated web created by the community.</p>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                ${sites.map(site => `
+                  <div class="p-6 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 transition-all cursor-pointer group" onclick="window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: '${site.url}' }, '*')">
+                    <h2 class="text-xl font-semibold mb-2 group-hover:text-blue-400 transition-colors">${site.title}</h2>
+                    <p class="text-sm text-gray-500 font-mono mb-4">${site.url}</p>
+                    <div class="flex items-center justify-between text-xs text-gray-400">
+                      <span>By ${site.publisherName}</span>
+                      <span>${new Date(site.publishedAt).toLocaleDateString()}</span>
+                    </div>
+                  </div>
+                `).join('')}
+                ${sites.length === 0 ? '<p class="text-gray-500">No sites published yet. Be the first!</p>' : ''}
+              </div>
+            </div>
+          </body>
+          </html>
+        `;
+        
+        if (currentRequestRef.current === requestId) {
+          setPageData({
+            url,
+            content: cleanHtml(directoryHtml),
+            title: 'Infinite Directory',
+            isLoading: false,
+            generatedBy: model
+          });
+        }
+        return;
+      }
+
       // Generate content with deep research flag
-      const html = await generatePageContent(url, model, deepResearch, stateToUse);
+      const stream = await generatePageContentStream(url, model, deepResearch, stateToUse);
       
-      if (currentRequestRef.current === requestId) {
+      let accumulatedHtml = '';
+      for await (const chunk of stream) {
+        if (currentRequestRef.current !== requestId) break;
+        accumulatedHtml += chunk;
         setPageData({
           url,
-          content: html,
+          content: accumulatedHtml.replace(/^\s*```html\n?/i, ''),
+          title: url,
+          isLoading: true,
+          generatedBy: model
+        });
+      }
+
+      if (currentRequestRef.current === requestId) {
+        // Post-process images after stream is complete
+        const finalHtml = await processAiImages(cleanHtml(accumulatedHtml));
+        setPageData({
+          url,
+          content: finalHtml,
           title: url,
           isLoading: false,
           generatedBy: model
@@ -437,6 +498,24 @@ const App: React.FC = () => {
     }
   };
 
+  const handlePublish = async () => {
+    if (!user || !pageData || !currentUrl) return;
+    try {
+      await addDoc(collection(db, 'published_sites'), {
+        url: currentUrl,
+        title: pageData.title || currentUrl,
+        content: pageData.content,
+        publisherUid: user.uid,
+        publisherName: user.displayName || 'Anonymous',
+        publishedAt: Date.now()
+      });
+      alert('Site published successfully to the Infinite Directory!');
+    } catch (error) {
+      console.error("Error publishing site:", error);
+      alert('Failed to publish site.');
+    }
+  };
+
   const handleClearHistory = () => {
     setHistory([]);
     setHistoryIndex(-1);
@@ -542,6 +621,8 @@ const App: React.FC = () => {
         user={user}
         onLogin={signInWithGoogle}
         onLogout={logout}
+        onPublish={handlePublish}
+        canPublish={!!user && !!pageData && currentUrl !== 'infinite://directory'}
       />
 
       <div className="flex-1 relative overflow-hidden flex flex-row">
@@ -604,10 +685,11 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {pageData && !loading ? (
+          {pageData ? (
             <BrowserViewport 
               htmlContent={pageData.content} 
               title={pageData.title}
+              isLoading={loading}
               onNavigate={handleIframeNavigate}
               onSelectKey={handleSelectKey}
               onStateUpdate={handleStateUpdate}

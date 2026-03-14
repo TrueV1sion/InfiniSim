@@ -3,30 +3,49 @@ import React, { useEffect, useRef } from 'react';
 interface BrowserViewportProps {
   htmlContent: string;
   title: string;
+  isLoading?: boolean;
   onNavigate: (url: string, state?: any) => void;
   onSelectKey?: () => void;
   onStateUpdate?: (state: any) => void;
 }
 
-const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, onNavigate, onSelectKey, onStateUpdate }) => {
+const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, isLoading, onNavigate, onSelectKey, onStateUpdate }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const previousHtmlRef = useRef('');
+  const isDocOpenRef = useRef(false);
 
   useEffect(() => {
     if (iframeRef.current) {
-        // Using blob URL instead of srcdoc for better compatibility with some scripts and resources
-        const blob = new Blob([htmlContent], { type: 'text/html' });
-        const url = URL.createObjectURL(blob);
-        
-        const oldUrl = iframeRef.current.src;
-        iframeRef.current.src = url;
+        if (!isLoading) {
+            // For the final render, use srcdoc to ensure a completely fresh environment
+            // This guarantees all scripts and styles execute correctly without document.write quirks
+            iframeRef.current.srcdoc = htmlContent;
+            previousHtmlRef.current = htmlContent;
+            isDocOpenRef.current = false;
+            return;
+        }
 
-        return () => {
-            if (oldUrl.startsWith('blob:')) {
-                URL.revokeObjectURL(oldUrl);
+        const doc = iframeRef.current.contentDocument || iframeRef.current.contentWindow?.document;
+        if (doc) {
+            if (htmlContent === previousHtmlRef.current) {
+                return;
             }
-        };
+            
+            if (!isDocOpenRef.current || !htmlContent.startsWith(previousHtmlRef.current) || previousHtmlRef.current === '') {
+                doc.open();
+                doc.write(htmlContent);
+                previousHtmlRef.current = htmlContent;
+                isDocOpenRef.current = true;
+            } else {
+                const newChunk = htmlContent.slice(previousHtmlRef.current.length);
+                doc.write(newChunk);
+                previousHtmlRef.current = htmlContent;
+            }
+        } else {
+            iframeRef.current.srcdoc = htmlContent;
+        }
     }
-  }, [htmlContent]);
+  }, [htmlContent, isLoading]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {

@@ -13,12 +13,31 @@
         "updatedAt": { "type": "number" }
       },
       "required": ["uid"]
+    },
+    "PublishedSite": {
+      "title": "PublishedSite",
+      "description": "A generated site published by a user to the public directory",
+      "type": "object",
+      "properties": {
+        "url": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "publisherUid": { "type": "string" },
+        "publisherName": { "type": "string" },
+        "publishedAt": { "type": "number" },
+        "likes": { "type": "number" }
+      },
+      "required": ["url", "content", "publisherUid", "publishedAt"]
     }
   },
   "firestore": {
     "users/{userId}": {
       "schema": "UserData",
       "description": "User's browser data"
+    },
+    "published_sites/{siteId}": {
+      "schema": "PublishedSite",
+      "description": "Publicly shared generated sites"
     }
   }
 }

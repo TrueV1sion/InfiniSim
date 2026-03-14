@@ -114,14 +114,119 @@ When a URL or prompt implies a game or 3D world:
 - NO markdown wrappers. NO explanations. NO code blocks. JUST CODE.
 `;
 
-const cleanHtml = (html: string) => {
-    html = html.replace(/^```html\n?/, '').replace(/\n?```$/, '').trim();
+export const cleanHtml = (html: string) => {
+    html = html.replace(/^\s*```html\n?/i, '').replace(/\n?```\s*$/, '').trim();
     if (html.includes('</body>') && !html.includes('INFINITE_WEB_NAVIGATE')) {
       html = html.replace('</body>', `${INJECTED_SCRIPT}</body>`);
     } else if (!html.includes('INFINITE_WEB_NAVIGATE')) {
       html += INJECTED_SCRIPT;
     }
     return html;
+};
+
+export const generatePageContentStream = async function* (
+  url: string,
+  model: ModelTier,
+  isDeepResearch: boolean = false,
+  virtualState?: any
+): AsyncGenerator<string, void, unknown> {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) throw new Error("API Key not found");
+
+  const ai = new GoogleGenAI({ apiKey });
+  
+  const stateString = virtualState && Object.keys(virtualState).length > 0 
+    ? JSON.stringify(virtualState) 
+    : 'None';
+
+  const prompt = `
+    [REQUEST_TYPE: SERVER_GET_STREAM]
+    [TARGET_URL: "${url}"]
+    [BROWSER_USER_AGENT: "InfiniteWeb/4.0 (LatentSpace; Interactive)"]
+    [DEEP_RESEARCH_MODE: ${isDeepResearch ? 'ENABLED' : 'DISABLED'}]
+    [CURRENT_BROWSER_STATE: ${stateString}]
+    
+    TASK: Execute the generation of the page at the target URL. 
+    CRITICAL STATE INSTRUCTION: If CURRENT_BROWSER_STATE is provided and contains data (e.g., localStorage, sessionStorage, cookies), you MUST render the page to reflect this state.
+    CRITICAL IMAGE INSTRUCTION: To include images, you MUST use the attribute \`data-ai-prompt="<detailed image description>"\` on \`<img>\` tags instead of a real src. The system will generate these images in real-time. Example: \`<img data-ai-prompt="A futuristic cyberpunk neon sign" src="" alt="Neon sign" />\`
+    ${isDeepResearch ? "CRITICAL: Perform deep architectural reasoning. Ensure every single JS component is flawless and robust. Optimize for maximum visual fidelity." : ""}
+    If this is a known brand site, simulate its high-fidelity alternative universe version.
+    If it is a tool or game, make it fully production-ready.
+  `;
+
+  try {
+    const responseStream = await ai.models.generateContentStream({
+      model: model,
+      contents: prompt,
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION,
+        temperature: isDeepResearch ? 0.9 : 0.7,
+      }
+    });
+
+    for await (const chunk of responseStream) {
+      if (chunk.text) {
+        yield chunk.text;
+      }
+    }
+  } catch (error) {
+    console.error("Gemini Stream Error:", error);
+    throw error;
+  }
+};
+
+export const generateImage = async (prompt: string): Promise<string> => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) throw new Error("API Key not found");
+
+  const ai = new GoogleGenAI({ apiKey });
+  
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: prompt,
+    });
+
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+      }
+    }
+    return '';
+  } catch (error) {
+    console.error("Image Generation Error:", error);
+    return '';
+  }
+};
+
+export const processAiImages = async (html: string): Promise<string> => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  const images = Array.from(doc.querySelectorAll('img[data-ai-prompt]'));
+
+  if (images.length === 0) return html;
+
+  const imagePromises = images.map(async (img) => {
+    const prompt = img.getAttribute('data-ai-prompt');
+    if (!prompt) return;
+    
+    // Set a loading state or placeholder
+    img.setAttribute('src', 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiMzMzMiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZmlsbD0iI2ZmZiIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+R2VuZXJhdGluZyBJbWFnZS4uLjwvdGV4dD48L3N2Zz4=');
+    
+    try {
+      const base64Image = await generateImage(prompt);
+      if (base64Image) {
+        img.setAttribute('src', base64Image);
+        img.removeAttribute('data-ai-prompt');
+      }
+    } catch (e) {
+      console.error("Failed to generate image for prompt:", prompt, e);
+    }
+  });
+
+  await Promise.all(imagePromises);
+  const doctype = html.match(/^<!DOCTYPE[^>]*>/i)?.[0] || '<!DOCTYPE html>';
+  return `${doctype}\n${doc.documentElement.outerHTML}`;
 };
 
 export const generatePageContent = async (

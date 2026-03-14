@@ -22,12 +22,32 @@ service cloud.firestore {
       return request.resource.data.keys().hasAll(['uid']) &&
              request.resource.data.uid is string;
     }
+    // Validate PublishedSite
+    function isValidPublishedSite() {
+      return request.resource.data.keys().hasAll(['url', 'content', 'publisherUid', 'publishedAt']) &&
+             request.resource.data.url is string &&
+             request.resource.data.content is string &&
+             request.resource.data.publisherUid is string &&
+             request.resource.data.publishedAt is number;
+    }
 
     match /users/{userId} {
       allow read: if isOwner(userId);
       allow create: if isOwner(userId) && isValidUserData() && uidUnchanged();
       allow update: if isOwner(userId) && isValidUserData() && uidNotModified();
       allow delete: if isOwner(userId);
+    }
+
+    match /published_sites/{siteId} {
+      allow read: if true; // Publicly readable directory
+      allow create: if isAuthenticated() && 
+                    request.resource.data.publisherUid == request.auth.uid && 
+                    isValidPublishedSite();
+      allow update: if isAuthenticated() && 
+                    resource.data.publisherUid == request.auth.uid && 
+                    request.resource.data.publisherUid == request.auth.uid &&
+                    isValidPublishedSite();
+      allow delete: if isAuthenticated() && resource.data.publisherUid == request.auth.uid;
     }
   }
 }
