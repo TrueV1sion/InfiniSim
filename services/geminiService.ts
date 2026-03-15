@@ -6,6 +6,9 @@ import { pruneVirtualState } from "../utils/statePruner";
 const INJECTED_SCRIPT = `
 <script>
   (function() {
+    if (window.__infiniteWebBridge) return;
+    window.__infiniteWebBridge = true;
+
     var _vls = {};
     var _vss = {};
 
@@ -74,14 +77,24 @@ const INJECTED_SCRIPT = `
       };
     }
 
-    window.navigateTo = function(url) {
+    function doNavigate(url) {
       window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: url, state: getBrowserState() }, '*');
+    }
+
+    window.navigateTo = doNavigate;
+    window.navigate = doNavigate;
+    window.goTo = doNavigate;
+    window.router = window.router || {};
+    window.router.push = doNavigate;
+    window.router.replace = doNavigate;
+    window.paginateTo = function(basePath, page) {
+      doNavigate(basePath + (basePath.includes('?') ? '&' : '?') + 'page=' + page);
     };
 
     var originalPushState = history.pushState;
     history.pushState = function(state, unused, url) {
       if (url) {
-        window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: url.toString(), state: getBrowserState() }, '*');
+        doNavigate(url.toString());
       }
       return originalPushState.apply(this, arguments);
     };
@@ -89,19 +102,61 @@ const INJECTED_SCRIPT = `
     var originalReplaceState = history.replaceState;
     history.replaceState = function(state, unused, url) {
       if (url) {
-        window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: url.toString(), state: getBrowserState() }, '*');
+        doNavigate(url.toString());
       }
       return originalReplaceState.apply(this, arguments);
     };
 
     document.addEventListener('click', function(e) {
       if (e.defaultPrevented) return;
+
       var link = e.target.closest('a');
       if (link) {
         var href = link.getAttribute('href');
-        if (href && href !== '#' && !href.startsWith('javascript:')) {
+        if (!href || href === '#' || href.startsWith('javascript:')) return;
+        if (href.startsWith('#') && href.length > 1) {
           e.preventDefault();
-          window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: href, state: getBrowserState() }, '*');
+          var target = document.querySelector(href) || document.getElementById(href.substring(1));
+          if (target) target.scrollIntoView({ behavior: 'smooth' });
+          return;
+        }
+        e.preventDefault();
+        doNavigate(href);
+        return;
+      }
+
+      var cardLink = e.target.closest('[data-card-link]');
+      if (cardLink && !e.target.closest('a, button, input, select, textarea, [role="button"]')) {
+        e.preventDefault();
+        doNavigate(cardLink.getAttribute('data-card-link'));
+        return;
+      }
+
+      var btn = e.target.closest('button, [role="button"], [role="link"]');
+      if (btn) {
+        var dataHref = btn.getAttribute('data-href') || btn.getAttribute('data-navigate');
+        if (dataHref) {
+          e.preventDefault();
+          doNavigate(dataHref);
+          return;
+        }
+
+        if (!btn.getAttribute('onclick') &&
+            !btn.getAttribute('@click') &&
+            !btn.getAttribute('x-on:click') &&
+            !btn.hasAttribute('data-action') &&
+            !btn.closest('form') &&
+            !btn.closest('[x-data]') &&
+            btn.getAttribute('type') !== 'submit') {
+
+          var text = (btn.textContent || '').trim();
+          var navKeywords = /^(view|read|see|open|explore|visit|go to|learn|more|details|show|browse|discover|continue|next|previous|prev|back|get started|sign up|log in|join|subscribe|buy|shop|order|try|start)/i;
+          if (text && navKeywords.test(text)) {
+            var slug = text.toLowerCase().replace(/[^a-z0-9\\s-]/g, '').replace(/\\s+/g, '-').substring(0, 40);
+            var currentPath = window.location.pathname || '/';
+            e.preventDefault();
+            doNavigate(currentPath.replace(/\\/$/, '') + '/' + slug);
+          }
         }
       }
     });
@@ -119,7 +174,7 @@ const INJECTED_SCRIPT = `
       }
       var queryStr = params.toString();
       var target = action + (action.includes('?') ? '&' : '?') + queryStr;
-      window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: target, state: getBrowserState() }, '*');
+      doNavigate(target);
     });
 
     var originalLog = console.log;
@@ -134,6 +189,39 @@ const INJECTED_SCRIPT = `
       var args = Array.prototype.slice.call(arguments);
       window.parent.postMessage({ type: 'DEVTOOLS_CONSOLE_LOG', level: 'error', payload: args.map(function(a) { return String(a); }) }, '*');
     };
+  })();
+</script>
+`;
+
+export const MINIMAL_BRIDGE_SCRIPT = `
+<script>
+  (function() {
+    if (window.__infiniteWebBridge) return;
+    function doNavigate(url) {
+      window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: url }, '*');
+    }
+    window.navigateTo = doNavigate;
+    window.navigate = doNavigate;
+    window.goTo = doNavigate;
+    window.router = window.router || {};
+    window.router.push = doNavigate;
+    window.router.replace = doNavigate;
+    document.addEventListener('click', function(e) {
+      if (e.defaultPrevented) return;
+      var link = e.target.closest('a');
+      if (link) {
+        var href = link.getAttribute('href');
+        if (!href || href === '#' || href.startsWith('javascript:')) return;
+        if (href.startsWith('#') && href.length > 1) {
+          e.preventDefault();
+          var target = document.querySelector(href) || document.getElementById(href.substring(1));
+          if (target) target.scrollIntoView({ behavior: 'smooth' });
+          return;
+        }
+        e.preventDefault();
+        doNavigate(href);
+      }
+    });
   })();
 </script>
 `;
@@ -162,9 +250,9 @@ The following libraries are AUTOMATICALLY INJECTED by the runtime. You MUST NOT 
 - **SweetAlert2** (\`Swal.fire()\` — native \`alert\`/\`confirm\`/\`prompt\` are overridden to use Swal)
 
 You MUST include \`<script>\`/\`<link>\` tags ONLY for these specialized libraries if needed:
-- Maps: Leaflet.js (\`<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" /><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>\`)
-- 3D/WebGL: Three.js (\`<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>\`) or PlayCanvas (\`<script src="https://code.playcanvas.com/playcanvas-latest.js"><\/script>\`)
-- 2D Physics: Matter.js (\`<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"><\/script>\`)
+- Maps: Leaflet.js (\`<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" /><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\\/script>\`)
+- 3D/WebGL: Three.js (\`<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\\/script>\`) or PlayCanvas (\`<script src="https://code.playcanvas.com/playcanvas-latest.js"><\\/script>\`)
+- 2D Physics: Matter.js (\`<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"><\\/script>\`)
 
 ### CORE ARCHITECTURAL PRINCIPLES:
 1. **Uncompromising Visual Quality**: Every page must look like an award-winning, professionally designed website. Use sophisticated typography via Google Fonts (Inter, JetBrains Mono, Playfair Display, etc.). Implement a cohesive color palette with proper contrast. Use generous whitespace, grid layouts, and visual hierarchy.
@@ -178,6 +266,30 @@ You MUST include \`<script>\`/\`<link>\` tags ONLY for these specialized librari
 5. **Responsive Design**: Use Tailwind responsive prefixes (\`sm:\`, \`md:\`, \`lg:\`, \`xl:\`) so layout adapts perfectly across all viewport sizes.
 6. **Micro-interactions**: Hover scales, subtle shadows, smooth GSAP entrance animations, transition effects on state changes. Make every interaction feel polished.
 7. **Rich Content Density**: Generate substantial, realistic content — not placeholder lorem ipsum. Use Faker.js (\`window.faker\`) for realistic names, emails, dates, paragraphs, company names, etc. Populate feeds, tables, cards, and lists with diverse, believable data.
+
+### UNIVERSAL NAVIGATION RULES (CRITICAL — ZERO DEAD ELEMENTS):
+Every single interactive element on the page MUST lead somewhere or do something real. Follow these rules strictly:
+
+1. **Links**: Every \`<a>\` tag MUST have a meaningful \`href\` that describes the destination (e.g., \`/products/quantum-headphones\`, \`/user/jane-doe/profile\`, \`/blog/post/ai-revolution\`). NEVER use \`href="#"\` or empty \`href\` values for navigation links.
+2. **Buttons that navigate**: Any button that conceptually leads to another view (View Details, Read More, See All, Visit Profile, Open, Explore, Get Started) MUST call \`window.navigateTo('/descriptive-path')\` on click.
+3. **Contextual paths**: Navigation links MUST include contextual path segments. A product card for "Quantum Headphones" priced at $299 should link to \`/products/quantum-headphones\` — NOT a generic \`/product\`.
+4. **Pagination**: Each page number, Next, Previous button MUST use \`window.paginateTo(basePath, pageNumber)\` or \`window.navigateTo()\` with page params. Page 2 MUST show different content than page 1.
+5. **Comments & Social**: Each username MUST link to a user profile page (\`/user/{handle}\`). Each "Reply" MUST open an inline reply form or navigate. "View N replies" MUST expand or navigate to \`/post/{id}/comments\`.
+6. **Navigation menus**: Sidebar items, footer links, breadcrumbs, tab headers, dropdown items — ALL must use \`<a href>\` or \`window.navigateTo()\` with descriptive URLs.
+7. **Cards & Grids**: The ENTIRE card surface must be clickable. Use \`data-card-link="/products/item-slug"\` on the card container, or wrap in an \`<a>\` tag. Each card in a grid MUST link to a unique detail page.
+8. **Search results**: Every result item MUST navigate to a corresponding detail page.
+9. **Modals & Dialogs**: Modals with complex content (quick-view, profile popup) MUST include a "View Full Page" link that calls \`window.navigateTo()\`.
+10. **Dropdown menus**: Use \`<a href="/path">\` for each dropdown item. NEVER use plain \`<div>\` or \`<span>\` for navigation menu items.
+11. **Breadcrumbs**: Every page below root level MUST include breadcrumb navigation. Each breadcrumb is a clickable \`<a>\` linking to the parent path.
+12. **Tabs**: Simple tabs use Alpine.js for client-side switching. Complex tabs with separate data (Reviews, Specifications) navigate via \`window.navigateTo('/product/item/reviews')\`.
+13. **Form submissions**: Search forms navigate to \`/search?q={query}\`. Login forms show a "logged in" state. Contact forms show a confirmation page.
+
+### NAVIGATION PATTERN EXAMPLES:
+- Blog listing: each post card \`<a href="/blog/post/{slug}">\` with full card clickable
+- E-commerce grid: each product \`<a href="/products/{product-slug}">\`, price, title, image all inside the link
+- Social feed: username links to \`/user/{handle}\`, post links to \`/post/{id}\`, comments to \`/post/{id}/comments\`
+- Dashboard sidebar: each menu item \`<a href="/dashboard/{section}">\`
+- Settings page: each category \`<a href="/settings/{category}">\`
 
 ### IMAGE GENERATION:
 To include images, use \`data-ai-prompt\` on \`<img>\` tags. The runtime generates these in real-time.
@@ -226,9 +338,9 @@ export const cleanHtml = (html: string) => {
         }
     }
 
-    if (html.includes('</body>') && !html.includes('INFINITE_WEB_NAVIGATE')) {
+    if (html.includes('</body>') && !html.includes('__infiniteWebBridge')) {
       html = html.replace('</body>', `${INJECTED_SCRIPT}</body>`);
-    } else if (!html.includes('INFINITE_WEB_NAVIGATE')) {
+    } else if (!html.includes('__infiniteWebBridge')) {
       html += INJECTED_SCRIPT;
     }
     return html;
@@ -248,19 +360,53 @@ function getModelConfig(model: ModelTier, isDeepResearch: boolean) {
   };
 }
 
+export interface NavigationContext {
+  referrerUrl?: string;
+  siteIdentity?: {
+    brandName?: string;
+    colorScheme?: string;
+    layoutStyle?: string;
+  };
+  breadcrumb?: Array<{ url: string; title: string }>;
+  queryParams?: Record<string, string>;
+}
+
 function buildPrompt(
   url: string,
   stateString: string,
   deviceType: string,
   soundEnabled: boolean,
-  isDeepResearch: boolean
+  isDeepResearch: boolean,
+  navContext?: NavigationContext
 ): string {
+  let contextSection = '';
+
+  if (navContext?.referrerUrl) {
+    contextSection += `\n[REFERRER_URL: "${navContext.referrerUrl}"]`;
+  }
+
+  if (navContext?.siteIdentity && Object.keys(navContext.siteIdentity).length > 0) {
+    contextSection += `\n[SITE_IDENTITY: ${JSON.stringify(navContext.siteIdentity)}]`;
+    contextSection += `\nSITE CONTINUITY: This is an inner page of an existing site. Match the visual style, colors, fonts, and branding of the referring page. Reuse the same navigation bar structure and footer. Only regenerate the main content area.`;
+  }
+
+  if (navContext?.breadcrumb && navContext.breadcrumb.length > 0) {
+    contextSection += `\n[NAVIGATION_BREADCRUMB: ${JSON.stringify(navContext.breadcrumb)}]`;
+    contextSection += `\nBREADCRUMB: Render a clickable breadcrumb trail at the top of the page using this path data. Each segment must be a link via <a href>.`;
+  }
+
+  if (navContext?.queryParams && Object.keys(navContext.queryParams).length > 0) {
+    contextSection += `\n[QUERY_PARAMS: ${JSON.stringify(navContext.queryParams)}]`;
+    contextSection += `\nQUERY PARAMETERS: Use these to filter, sort, paginate, or display search results. Reflect them in the page content.`;
+  }
+
   return `[TARGET_URL: "${url}"]
 [DEVICE_TYPE: "${deviceType}"]
 [SOUND_ENABLED: ${soundEnabled ? 'TRUE' : 'FALSE'}]
-[CURRENT_BROWSER_STATE: ${stateString}]
+[CURRENT_BROWSER_STATE: ${stateString}]${contextSection}
 
 Generate the complete, fully interactive page for the target URL.
+CRITICAL: Every button, link, card, tab, menu item, and interactive element MUST be wired to navigate via <a href> or window.navigateTo(). Zero dead buttons. Zero non-functional links.
 ${deviceType !== 'desktop' ? `DEVICE: Optimize layout, typography, and interactions for ${deviceType}. Use Tailwind responsive prefixes appropriately, but ensure base classes look perfect for ${deviceType}.` : ''}
 ${deviceType === 'vr' ? 'VR MODE: Use A-Frame (<script src="https://aframe.io/releases/1.4.2/aframe.min.js"><\\/script>) or Three.js for an immersive 3D environment with interactive objects, skybox, and camera controls.' : ''}
 ${deviceType === 'ar' ? 'AR MODE: Use A-Frame with AR.js or WebXR. Transparent background — no skybox. Render 3D objects floating in space.' : ''}
@@ -278,7 +424,8 @@ export const generatePageContentStream = async function* (
   virtualState?: any,
   deviceType: 'desktop' | 'tablet' | 'mobile' | 'vr' | 'ar' = 'desktop',
   soundEnabled: boolean = false,
-  userId?: string
+  userId?: string,
+  navContext?: NavigationContext
 ): AsyncGenerator<string, void, unknown> {
   const apiKey = await resolveApiKey(userId);
   if (!apiKey) throw new Error("API Key not found");
@@ -290,7 +437,7 @@ export const generatePageContentStream = async function* (
     ? JSON.stringify(pruned)
     : 'None';
 
-  const prompt = buildPrompt(url, stateString, deviceType, soundEnabled, isDeepResearch);
+  const prompt = buildPrompt(url, stateString, deviceType, soundEnabled, isDeepResearch, navContext);
 
   try {
     const responseStream = await ai.models.generateContentStream({
@@ -320,10 +467,11 @@ export const generateImage = async (prompt: string, userId?: string): Promise<st
   const ai = new GoogleGenAI({ apiKey });
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Image generation timed out')), IMAGE_TIMEOUT_MS);
+    });
 
-    const response = await ai.models.generateContent({
+    const generatePromise = ai.models.generateContent({
       model: IMAGE_MODEL,
       contents: `Generate a high-quality photograph: ${prompt}. Photorealistic, professional lighting, high resolution.`,
       config: {
@@ -331,7 +479,7 @@ export const generateImage = async (prompt: string, userId?: string): Promise<st
       },
     });
 
-    clearTimeout(timeout);
+    const response = await Promise.race([generatePromise, timeoutPromise]);
 
     for (const part of response.candidates?.[0]?.content?.parts || []) {
       if (part.inlineData) {
@@ -403,7 +551,8 @@ export const generatePageContent = async (
   virtualState?: any,
   deviceType: 'desktop' | 'tablet' | 'mobile' | 'vr' | 'ar' = 'desktop',
   soundEnabled: boolean = false,
-  userId?: string
+  userId?: string,
+  navContext?: NavigationContext
 ): Promise<string> => {
   const apiKey = await resolveApiKey(userId);
   if (!apiKey) throw new Error("API Key not found");
@@ -415,7 +564,7 @@ export const generatePageContent = async (
     ? JSON.stringify(pruned)
     : 'None';
 
-  const prompt = buildPrompt(url, stateString, deviceType, soundEnabled, isDeepResearch);
+  const prompt = buildPrompt(url, stateString, deviceType, soundEnabled, isDeepResearch, navContext);
 
   try {
     const response = await ai.models.generateContent({
@@ -453,6 +602,7 @@ Modify the existing HTML source to satisfy the user's request.
 ${deviceType !== 'desktop' ? `Optimize for ${deviceType} viewport.` : ''}
 ${soundEnabled ? 'Audio is enabled — integrate Tone.js/Howler.js as appropriate.' : ''}
 Keep all injected bridge scripts intact. Maintain the design system.
+CRITICAL: Ensure ALL buttons, links, and interactive elements navigate or perform actions. Zero dead elements.
 Return the FULL updated HTML source starting with <!DOCTYPE html>.
 
 [CURRENT_SOURCE_START]

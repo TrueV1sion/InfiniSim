@@ -1,20 +1,25 @@
 import { useState, useCallback, useRef, useEffect, Dispatch, SetStateAction } from 'react';
 import { ModelTier, WebPage, HistoryItem } from '../types';
-import { generatePageContentStream, processAiImages, cleanHtml, PRELOADED_SCRIPTS } from '../services/geminiService';
+import {
+  generatePageContentStream,
+  processAiImages,
+  cleanHtml,
+  PRELOADED_SCRIPTS,
+  MINIMAL_BRIDGE_SCRIPT,
+  NavigationContext,
+} from '../services/geminiService';
 import { db } from '../firebase';
 import { collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { parseGeminiError, categorizeError, ErrorCategory } from '../utils/errorParser';
 import { pruneVirtualState } from '../utils/statePruner';
 import { getCachedPage, setCachedPage, generateCacheKey } from '../services/cacheService';
+import { resolveUrl, isSameSite, parseQueryParams } from '../utils/urlUtils';
+import { LOADING_MESSAGES, MAX_BREADCRUMB_LENGTH } from '../utils/constants';
 
-const LOADING_MESSAGES = [
-  'Synthesizing latent reality...',
-  'Injecting architectural logic...',
-  'Synchronizing interactive nodes...',
-  'Simulating physics engine...',
-  'Polishing creative facets...',
-  'Deep Researching context...',
-];
+interface BreadcrumbEntry {
+  url: string;
+  title: string;
+}
 
 interface ImageProgress {
   completed: number;
@@ -54,6 +59,11 @@ interface NavigationDeps {
   onError: (category: ErrorCategory, displayMessage: string, url: string) => void;
 }
 
+function extractTitle(html: string): string | null {
+  const match = html.match(/<title[^>]*>(.*?)<\/title>/i);
+  return match ? match[1].trim() : null;
+}
+
 export function useNavigation(deps: NavigationDeps): UseNavigationResult {
   const {
     history, setHistory, historyIndex, setHistoryIndex,
@@ -78,10 +88,15 @@ export function useNavigation(deps: NavigationDeps): UseNavigationResult {
   const [imageProgress, setImageProgress] = useState<ImageProgress | null>(null);
   const currentRequestRef = useRef<number>(0);
   const hasResumed = useRef(false);
+  const breadcrumbRef = useRef<BreadcrumbEntry[]>([]);
+  const previousUrlRef = useRef<string>('');
 
   const navigateTo = useCallback(async (url: string, isHistoryNav = false, incomingState?: any) => {
     const requestId = Date.now();
     currentRequestRef.current = requestId;
+
+    const referrerUrl = previousUrlRef.current;
+    previousUrlRef.current = url;
 
     setLoading(true);
     setLoadingProgress(0);
@@ -98,6 +113,28 @@ export function useNavigation(deps: NavigationDeps): UseNavigationResult {
       newHistory.push({ url, timestamp: Date.now() });
       setHistory(newHistory);
       setHistoryIndex(newHistory.length - 1);
+    }
+
+    const navContext: NavigationContext = {};
+
+    if (referrerUrl) {
+      navContext.referrerUrl = referrerUrl;
+
+      if (isSameSite(referrerUrl, url)) {
+        const vs = stateToUse || {};
+        if (vs.__site_identity) {
+          navContext.siteIdentity = vs.__site_identity;
+        }
+      }
+    }
+
+    if (breadcrumbRef.current.length > 0) {
+      navContext.breadcrumb = [...breadcrumbRef.current];
+    }
+
+    const qp = parseQueryParams(url);
+    if (Object.keys(qp).length > 0) {
+      navContext.queryParams = qp;
     }
 
     try {
@@ -151,34 +188,52 @@ export function useNavigation(deps: NavigationDeps): UseNavigationResult {
         const cacheKey = generateCacheKey(url, model);
         const cached = await getCachedPage(cacheKey);
         if (cached && currentRequestRef.current === requestId) {
+          const cachedTitle = extractTitle(cached) || url;
           setPageData({
             url,
             content: cached,
-            title: url,
+            title: cachedTitle,
             isLoading: false,
             generatedBy: model,
           });
+
+          breadcrumbRef.current = [
+            ...breadcrumbRef.current,
+            { url, title: cachedTitle },
+          ].slice(-MAX_BREADCRUMB_LENGTH);
+
           return;
         }
       }
 
       const prunedState = pruneVirtualState(stateToUse);
-      const stream = await generatePageContentStream(url, model, deepResearch, prunedState, deviceType, soundEnabled, userId);
+      const stream = generatePageContentStream(
+        url, model, deepResearch, prunedState, deviceType, soundEnabled, userId, navContext
+      );
 
       let accumulatedHtml = '';
+      let streamTitle: string | null = null;
+
       for await (const chunk of stream) {
         if (currentRequestRef.current !== requestId) break;
         accumulatedHtml += chunk;
+
+        if (!streamTitle) {
+          streamTitle = extractTitle(accumulatedHtml);
+        }
 
         let displayHtml = accumulatedHtml.replace(/^\s*```html\n?/i, '');
         if (!displayHtml.includes('cdn.tailwindcss.com')) {
           displayHtml = PRELOADED_SCRIPTS + '\n' + displayHtml;
         }
+        if (!displayHtml.includes('__infiniteWebBridge')) {
+          displayHtml = MINIMAL_BRIDGE_SCRIPT + '\n' + displayHtml;
+        }
 
         setPageData({
           url,
           content: displayHtml,
-          title: url,
+          title: streamTitle || url,
           isLoading: true,
           generatedBy: model,
         });
@@ -186,6 +241,7 @@ export function useNavigation(deps: NavigationDeps): UseNavigationResult {
 
       if (currentRequestRef.current === requestId) {
         const cleanedHtml = cleanHtml(accumulatedHtml);
+        const finalTitle = extractTitle(cleanedHtml) || streamTitle || url;
 
         setImageProgress({ completed: 0, total: 0 });
         const finalHtml = await processAiImages(cleanedHtml, (completed, total) => {
@@ -198,10 +254,15 @@ export function useNavigation(deps: NavigationDeps): UseNavigationResult {
         setPageData({
           url,
           content: finalHtml,
-          title: url,
+          title: finalTitle,
           isLoading: false,
           generatedBy: model,
         });
+
+        breadcrumbRef.current = [
+          ...breadcrumbRef.current,
+          { url, title: finalTitle },
+        ].slice(-MAX_BREADCRUMB_LENGTH);
 
         if (!deepResearch) {
           const cacheKey = generateCacheKey(url, model);
@@ -292,19 +353,13 @@ export function useNavigation(deps: NavigationDeps): UseNavigationResult {
     setLoadingProgress(0);
     setCurrentUrl('');
     setPageData(null);
+    breadcrumbRef.current = [];
   };
 
   const handleIframeNavigate = (targetUrl: string, state?: any) => {
-    let finalUrl = targetUrl;
-    if (targetUrl.startsWith('/')) {
-      try {
-        const currentObj = new URL(currentUrl.startsWith('http') ? currentUrl : `https://${currentUrl}`);
-        finalUrl = currentObj.origin + targetUrl;
-      } catch {
-        finalUrl = targetUrl;
-      }
-    }
-    navigateTo(finalUrl, false, state);
+    const resolved = resolveUrl(targetUrl, currentUrl);
+    if (!resolved) return;
+    navigateTo(resolved, false, state);
   };
 
   const handleStateUpdate = (state: any) => {

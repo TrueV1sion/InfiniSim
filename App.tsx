@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import AddressBar from './components/AddressBar';
 import BrowserViewport from './components/BrowserViewport';
 import EmptyState from './components/EmptyState';
@@ -7,6 +7,7 @@ import DevToolsPanel from './components/DevToolsPanel';
 import DownloadsPanel from './components/DownloadsPanel';
 import ErrorBoundary from './components/ErrorBoundary';
 import ApiKeyModal from './components/ApiKeyModal';
+import ToastContainer from './components/Toast';
 import { ModelTier, HistoryItem, Bookmark, DownloadItem } from './types';
 import { refinePageContent } from './services/geminiService';
 import { signInWithGoogle, logout } from './firebase';
@@ -15,19 +16,13 @@ import { useFirebaseAuth } from './hooks/useFirebaseAuth';
 import { useFirestoreSync } from './hooks/useFirestoreSync';
 import { useNavigation } from './hooks/useNavigation';
 import { useDownloads } from './hooks/useDownloads';
-import { parseGeminiError, categorizeError, type ErrorCategory } from './utils/errorParser';
+import { useToast } from './hooks/useToast';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { parseGeminiError, type ErrorCategory } from './utils/errorParser';
+import { LOADING_MESSAGES } from './utils/constants';
 import { collection, addDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { getLocalApiKey, syncApiKeyToSupabase, loadApiKeyFromSupabase } from './services/apiKeyService';
-
-const LOADING_MESSAGES = [
-  'Synthesizing latent reality...',
-  'Injecting architectural logic...',
-  'Synchronizing interactive nodes...',
-  'Simulating physics engine...',
-  'Polishing creative facets...',
-  'Deep Researching context...',
-];
 
 const App: React.FC = () => {
   const [history, setHistory] = usePersistedState<HistoryItem[]>('history', []);
@@ -153,6 +148,35 @@ const App: React.FC = () => {
     downloads, setDownloads, nav.pageData, nav.currentUrl, setIsDownloadsOpen
   );
 
+  const { toasts, addToast, removeToast } = useToast();
+  const addressBarRef = useRef<HTMLInputElement>(null);
+
+  const handleToggleBookmark = useCallback(() => {
+    if (!nav.currentUrl) return;
+    const exists = bookmarks.some(b => b.url === nav.currentUrl);
+    if (exists) {
+      setBookmarks(prev => prev.filter(b => b.url !== nav.currentUrl));
+      addToast('Bookmark removed', 'info');
+    } else {
+      setBookmarks(prev => [...prev, {
+        url: nav.currentUrl,
+        title: nav.pageData?.title || nav.currentUrl,
+        timestamp: Date.now(),
+      }]);
+      addToast('Bookmark added', 'success');
+    }
+  }, [nav.currentUrl, nav.pageData, bookmarks, setBookmarks, addToast]);
+
+  const shortcutHandlers = useMemo(() => ({
+    onFocusAddressBar: () => addressBarRef.current?.focus(),
+    onBookmark: handleToggleBookmark,
+    onBack: nav.handleBack,
+    onForward: nav.handleForward,
+    onReload: nav.handleReload,
+  }), [handleToggleBookmark, nav.handleBack, nav.handleForward, nav.handleReload]);
+
+  useKeyboardShortcuts(shortcutHandlers);
+
   const handleManualCodeUpdate = (newCode: string) => {
     if (nav.pageData) {
       nav.setPageData({ ...nav.pageData, content: newCode });
@@ -173,20 +197,6 @@ const App: React.FC = () => {
     }
   };
 
-  const handleToggleBookmark = () => {
-    if (!nav.currentUrl) return;
-    const exists = bookmarks.some(b => b.url === nav.currentUrl);
-    if (exists) {
-      setBookmarks(prev => prev.filter(b => b.url !== nav.currentUrl));
-    } else {
-      setBookmarks(prev => [...prev, {
-        url: nav.currentUrl,
-        title: nav.pageData?.title || nav.currentUrl,
-        timestamp: Date.now(),
-      }]);
-    }
-  };
-
   const handlePublish = async () => {
     if (!user || !nav.pageData || !nav.currentUrl) return;
     try {
@@ -198,10 +208,10 @@ const App: React.FC = () => {
         publisherName: user.displayName || 'Anonymous',
         publishedAt: Date.now(),
       });
-      alert('Site published successfully to the Infinite Directory!');
+      addToast('Published to the Infinite Directory', 'success');
     } catch (error) {
       console.error('Error publishing site:', error);
-      alert('Failed to publish site.');
+      addToast('Failed to publish site', 'error');
     }
   };
 
@@ -361,6 +371,8 @@ const App: React.FC = () => {
         }}
         userId={user?.uid}
       />
+
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
     </div>
   );
 };
