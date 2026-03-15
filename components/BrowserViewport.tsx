@@ -19,32 +19,36 @@ const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, i
   useEffect(() => {
     if (iframeRef.current) {
         if (!isLoading) {
-            // For the final render, use srcdoc to ensure a completely fresh environment
-            // This guarantees all scripts and styles execute correctly without document.write quirks
             iframeRef.current.srcdoc = htmlContent;
             previousHtmlRef.current = htmlContent;
             isDocOpenRef.current = false;
             return;
         }
 
-        const doc = iframeRef.current.contentDocument || iframeRef.current.contentWindow?.document;
-        if (doc) {
-            if (htmlContent === previousHtmlRef.current) {
-                return;
-            }
-            
-            if (!isDocOpenRef.current || !htmlContent.startsWith(previousHtmlRef.current) || previousHtmlRef.current === '') {
-                doc.open();
-                doc.write(htmlContent);
-                previousHtmlRef.current = htmlContent;
-                isDocOpenRef.current = true;
+        try {
+            const doc = iframeRef.current.contentDocument || iframeRef.current.contentWindow?.document;
+            if (doc) {
+                if (htmlContent === previousHtmlRef.current) {
+                    return;
+                }
+
+                if (!isDocOpenRef.current || !htmlContent.startsWith(previousHtmlRef.current) || previousHtmlRef.current === '') {
+                    doc.open();
+                    doc.write(htmlContent);
+                    previousHtmlRef.current = htmlContent;
+                    isDocOpenRef.current = true;
+                } else {
+                    const newChunk = htmlContent.slice(previousHtmlRef.current.length);
+                    doc.write(newChunk);
+                    previousHtmlRef.current = htmlContent;
+                }
             } else {
-                const newChunk = htmlContent.slice(previousHtmlRef.current.length);
-                doc.write(newChunk);
-                previousHtmlRef.current = htmlContent;
+                iframeRef.current.srcdoc = htmlContent;
             }
-        } else {
+        } catch {
             iframeRef.current.srcdoc = htmlContent;
+            previousHtmlRef.current = htmlContent;
+            isDocOpenRef.current = false;
         }
     }
   }, [htmlContent, isLoading]);
@@ -86,7 +90,7 @@ const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, i
           ref={iframeRef}
           title={title}
           className="w-full h-full border-none block"
-          sandbox="allow-scripts allow-forms allow-popups allow-modals allow-pointer-lock allow-downloads"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-pointer-lock allow-downloads"
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; xr-spatial-tracking"
         />
       </div>
