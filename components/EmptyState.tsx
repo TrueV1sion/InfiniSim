@@ -25,7 +25,7 @@ const EmptyState: React.FC<EmptyStateProps> = ({ onNavigate, hasApiKey, onSetupA
                 </h1>
                 <p className="text-xl text-gray-400 font-light leading-relaxed">
                     The browser for the latent space. <br/>
-                    Powered by Gemini 3.0 & PlayCanvas Architect.
+                    Powered by Gemini 3 & PlayCanvas Architect.
                 </p>
             </div>
 
@@ -76,11 +76,11 @@ const EmptyState: React.FC<EmptyStateProps> = ({ onNavigate, hasApiKey, onSetupA
             <div className="pt-12 flex justify-center gap-8 opacity-40">
                 <div className="flex items-center gap-3">
                     <div className="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]"></div>
-                    <span className="text-xs font-mono tracking-widest uppercase">Gemini 3.0 Flash</span>
+                    <span className="text-xs font-mono tracking-widest uppercase">Gemini 3 Flash</span>
                 </div>
                 <div className="flex items-center gap-3">
                     <div className="w-2.5 h-2.5 rounded-full bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.5)]"></div>
-                    <span className="text-xs font-mono tracking-widest uppercase">Gemini 3.0 Pro</span>
+                    <span className="text-xs font-mono tracking-widest uppercase">Gemini 3.1 Pro</span>
                 </div>
                 <div className="flex items-center gap-3">
                     <div className="w-2.5 h-2.5 rounded-full bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]"></div>

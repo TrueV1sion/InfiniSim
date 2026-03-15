@@ -1,7 +1,9 @@
 import { supabase } from '../supabase';
 
+const CACHE_VERSION = 'v2';
+
 export function generateCacheKey(url: string, model: string): string {
-  const input = `${url}::${model}`;
+  const input = `${CACHE_VERSION}::${url}::${model}`;
   let hash = 0;
   for (let i = 0; i < input.length; i++) {
     const char = input.charCodeAt(i);

@@ -1,6 +1,6 @@
 export enum ModelTier {
   FLASH = 'gemini-3-flash-preview',
-  PRO = 'gemini-3-pro-preview',
+  PRO = 'gemini-3.1-pro-preview',
 }
 
 declare global {
