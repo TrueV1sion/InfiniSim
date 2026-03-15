@@ -457,8 +457,8 @@ export const generatePageContentStream = async function* (
   }
 };
 
-const IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
-const IMAGE_TIMEOUT_MS = 15000;
+const IMAGE_MODEL = 'gemini-2.0-flash-preview-image-generation';
+const IMAGE_TIMEOUT_MS = 30000;
 
 export const generateImage = async (prompt: string, userId?: string): Promise<string> => {
   const apiKey = await resolveApiKey(userId);
@@ -475,7 +475,7 @@ export const generateImage = async (prompt: string, userId?: string): Promise<st
       model: IMAGE_MODEL,
       contents: `Generate a high-quality photograph: ${prompt}. Photorealistic, professional lighting, high resolution.`,
       config: {
-        responseModalities: ['image', 'text'],
+        responseModalities: ['TEXT', 'IMAGE'],
       },
     });
 
