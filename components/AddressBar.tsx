@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ModelTier, HistoryItem, Bookmark } from '../types';
+import { DeviceType } from './BrowserViewport';
 
 interface AddressBarProps {
   currentUrl: string;
   isLoading: boolean;
   model: ModelTier;
+  deviceType: DeviceType;
   onNavigate: (url: string) => void;
   onBack: () => void;
   onForward: () => void;
@@ -13,6 +15,7 @@ interface AddressBarProps {
   onDownload: () => void;
   canDownload: boolean;
   onSetModel: (model: ModelTier) => void;
+  onSetDeviceType: (deviceType: DeviceType) => void;
   canGoBack: boolean;
   canGoForward: boolean;
   onToggleHistory: () => void;
@@ -22,6 +25,8 @@ interface AddressBarProps {
   onToggleBookmark: () => void;
   isDeepResearch: boolean;
   onToggleDeepResearch: () => void;
+  isSoundEnabled: boolean;
+  onToggleSound: () => void;
   history: HistoryItem[];
   bookmarks: Bookmark[];
   onHome: () => void;
@@ -38,6 +43,7 @@ const AddressBar: React.FC<AddressBarProps> = ({
   currentUrl,
   isLoading,
   model,
+  deviceType,
   onNavigate,
   onBack,
   onForward,
@@ -46,6 +52,7 @@ const AddressBar: React.FC<AddressBarProps> = ({
   onDownload,
   canDownload,
   onSetModel,
+  onSetDeviceType,
   canGoBack,
   canGoForward,
   onToggleHistory,
@@ -55,6 +62,8 @@ const AddressBar: React.FC<AddressBarProps> = ({
   onToggleBookmark,
   isDeepResearch,
   onToggleDeepResearch,
+  isSoundEnabled,
+  onToggleSound,
   history,
   bookmarks,
   onHome,
@@ -231,6 +240,15 @@ const AddressBar: React.FC<AddressBarProps> = ({
             </button>
             <button
                 type="button"
+                onClick={onToggleSound}
+                className={`flex items-center gap-1.5 px-2 py-1 rounded-md transition-all border ${isSoundEnabled ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-400' : 'bg-transparent border-transparent text-gray-600 hover:text-gray-400'}`}
+                title="Enable Audio & Music (Tone.js / Howler.js)"
+            >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /></svg>
+                <span className="text-[9px] font-bold tracking-widest uppercase">Audio</span>
+            </button>
+            <button
+                type="button"
                 onClick={onToggleDeepResearch}
                 className={`flex items-center gap-1.5 px-2 py-1 rounded-md transition-all border ${isDeepResearch ? 'bg-purple-600/20 border-purple-500/50 text-purple-400' : 'bg-transparent border-transparent text-gray-600 hover:text-gray-400'}`}
                 title="Deep Research Mode (Slower but higher quality)"
@@ -268,6 +286,54 @@ const AddressBar: React.FC<AddressBarProps> = ({
       </form>
 
       <div className="flex items-center gap-3">
+        <div className="flex items-center bg-[#111] rounded-xl p-1 border border-white/5">
+          <button
+            onClick={() => onSetDeviceType('desktop')}
+            className={`p-1.5 rounded-lg transition-all ${
+              deviceType === 'desktop' ? 'bg-white/10 text-white shadow-sm' : 'text-gray-500 hover:text-gray-300'
+            }`}
+            title="Desktop View"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+          </button>
+          <button
+            onClick={() => onSetDeviceType('tablet')}
+            className={`p-1.5 rounded-lg transition-all ${
+              deviceType === 'tablet' ? 'bg-white/10 text-white shadow-sm' : 'text-gray-500 hover:text-gray-300'
+            }`}
+            title="Tablet View"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+          </button>
+          <button
+            onClick={() => onSetDeviceType('mobile')}
+            className={`p-1.5 rounded-lg transition-all ${
+              deviceType === 'mobile' ? 'bg-white/10 text-white shadow-sm' : 'text-gray-500 hover:text-gray-300'
+            }`}
+            title="Mobile View"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+          </button>
+          <button
+            onClick={() => onSetDeviceType('vr')}
+            className={`p-1.5 rounded-lg transition-all ${
+              deviceType === 'vr' ? 'bg-white/10 text-white shadow-sm' : 'text-gray-500 hover:text-gray-300'
+            }`}
+            title="VR View"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+          </button>
+          <button
+            onClick={() => onSetDeviceType('ar')}
+            className={`p-1.5 rounded-lg transition-all ${
+              deviceType === 'ar' ? 'bg-white/10 text-white shadow-sm' : 'text-gray-500 hover:text-gray-300'
+            }`}
+            title="AR View"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+          </button>
+        </div>
+
         <div className="flex items-center bg-[#111] rounded-xl p-1 border border-white/5">
           <button
             onClick={() => onSetModel(ModelTier.FLASH)}

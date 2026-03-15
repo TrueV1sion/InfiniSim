@@ -6,7 +6,7 @@ import HistoryPanel from './components/HistoryPanel';
 import DevToolsPanel from './components/DevToolsPanel';
 import DownloadsPanel from './components/DownloadsPanel';
 import { ModelTier, WebPage, HistoryItem, Bookmark, DownloadItem } from './types';
-import { refinePageContent, generatePageContentStream, processAiImages, cleanHtml } from './services/geminiService';
+import { refinePageContent, generatePageContentStream, processAiImages, cleanHtml, PRELOADED_SCRIPTS } from './services/geminiService';
 import { auth, db, signInWithGoogle, logout } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, getDoc, collection, addDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
@@ -53,12 +53,20 @@ const App: React.FC = () => {
     getStored('model', ModelTier.FLASH)
   );
 
+  const [deviceType, setDeviceType] = useState<'desktop' | 'tablet' | 'mobile' | 'vr' | 'ar'>(() => 
+    getStored('deviceType', 'desktop')
+  );
+
   const [virtualState, setVirtualState] = useState<any>(() =>
     getStored('virtualState', {})
   );
 
   const [deepResearch, setDeepResearch] = useState<boolean>(() =>
     getStored('deepResearch', false)
+  );
+
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() =>
+    getStored('soundEnabled', false)
   );
 
   const [currentUrl, setCurrentUrl] = useState<string>(() => {
@@ -164,8 +172,16 @@ const App: React.FC = () => {
   }, [model]);
 
   useEffect(() => {
+    setStored('deviceType', deviceType);
+  }, [deviceType]);
+
+  useEffect(() => {
     setStored('deepResearch', deepResearch);
   }, [deepResearch]);
+
+  useEffect(() => {
+    setStored('soundEnabled', soundEnabled);
+  }, [soundEnabled]);
 
   useEffect(() => {
     setStored('virtualState', virtualState);
@@ -240,15 +256,21 @@ const App: React.FC = () => {
       }
 
       // Generate content with deep research flag
-      const stream = await generatePageContentStream(url, model, deepResearch, stateToUse);
+      const stream = await generatePageContentStream(url, model, deepResearch, stateToUse, deviceType, soundEnabled);
       
       let accumulatedHtml = '';
       for await (const chunk of stream) {
         if (currentRequestRef.current !== requestId) break;
         accumulatedHtml += chunk;
+        
+        let displayHtml = accumulatedHtml.replace(/^\s*```html\n?/i, '');
+        if (!displayHtml.includes('cdn.tailwindcss.com')) {
+            displayHtml = PRELOADED_SCRIPTS + '\n' + displayHtml;
+        }
+
         setPageData({
           url,
-          content: accumulatedHtml.replace(/^\s*```html\n?/i, ''),
+          content: displayHtml,
           title: url,
           isLoading: true,
           generatedBy: model
@@ -269,11 +291,40 @@ const App: React.FC = () => {
     } catch (err) {
       if (currentRequestRef.current === requestId) {
         console.error(err);
-        const errorMessage = err instanceof Error ? err.message : String(err);
+        let errorMessage = '';
+        if (err instanceof Error) {
+          errorMessage = err.message;
+        } else if (typeof err === 'object' && err !== null) {
+          try {
+            errorMessage = JSON.stringify(err);
+          } catch {
+            errorMessage = String(err);
+          }
+        } else {
+          errorMessage = String(err);
+        }
         
-        if (errorMessage.includes('Requested entity was not found')) {
+        let displayMessage = errorMessage;
+        try {
+          const parsed = JSON.parse(errorMessage);
+          if (parsed.error && parsed.error.message) {
+            displayMessage = parsed.error.message;
+            try {
+              const innerParsed = JSON.parse(displayMessage);
+              if (innerParsed.error && innerParsed.error.message) {
+                displayMessage = innerParsed.error.message;
+              }
+            } catch (e) {
+              // ignore
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+        
+        if (displayMessage.includes('Requested entity was not found')) {
             setHasKey(false);
-        } else if (errorMessage.includes('429') || errorMessage.includes('quota') || errorMessage.includes('RESOURCE_EXHAUSTED')) {
+        } else if (displayMessage.includes('429') || displayMessage.includes('quota') || displayMessage.includes('RESOURCE_EXHAUSTED')) {
             const errorHtml = `
               <!DOCTYPE html>
               <html>
@@ -300,6 +351,32 @@ const App: React.FC = () => {
               isLoading: false,
               generatedBy: model
             });
+        } else if (displayMessage.includes('token count exceeds') || displayMessage.includes('400')) {
+            const errorHtml = `
+              <!DOCTYPE html>
+              <html>
+              <head><script src="https://cdn.tailwindcss.com"></script></head>
+              <body class="bg-[#050505] text-white flex items-center justify-center min-h-screen p-10 font-sans">
+                <div class="max-w-md w-full p-8 rounded-3xl bg-white/5 border border-white/10 backdrop-blur-3xl shadow-[0_0_50px_rgba(239,68,68,0.1)]">
+                    <div class="w-16 h-16 bg-orange-500/10 text-orange-500 rounded-2xl flex items-center justify-center mb-6">
+                        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                    </div>
+                    <h1 class="text-2xl font-bold mb-2">Context Limit Reached</h1>
+                    <p class="text-gray-400 text-sm mb-6 leading-relaxed">The page state or history has grown too large for the AI to process. Please clear your history or start a new session.</p>
+                    <div class="flex flex-col gap-3">
+                        <button onclick="window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: '${url}' }, '*')" class="w-full py-3 bg-white/10 hover:bg-white/20 rounded-xl transition-all font-semibold">Retry</button>
+                    </div>
+                </div>
+              </body>
+              </html>
+            `;
+            setPageData({
+              url,
+              content: errorHtml,
+              title: 'Context Limit Reached',
+              isLoading: false,
+              generatedBy: model
+            });
         } else {
             const errorHtml = `
               <!DOCTYPE html>
@@ -311,7 +388,7 @@ const App: React.FC = () => {
                         <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                     </div>
                     <h1 class="text-2xl font-bold mb-2">Simulated Reality Halted</h1>
-                    <p class="text-gray-400 text-sm mb-6 leading-relaxed">${errorMessage}</p>
+                    <p class="text-gray-400 text-sm mb-6 leading-relaxed">${displayMessage}</p>
                     <button onclick="window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: '${url}' }, '*')" class="w-full py-3 bg-red-600 hover:bg-red-500 rounded-xl transition-all font-semibold shadow-lg shadow-red-600/20">Sync Reality</button>
                 </div>
               </body>
@@ -464,20 +541,51 @@ const App: React.FC = () => {
     if (!pageData) return;
     setIsRefining(true);
     try {
-      const newHtml = await refinePageContent(pageData.content, instruction, model);
+      const newHtml = await refinePageContent(pageData.content, instruction, model, deviceType, soundEnabled);
       setPageData({
         ...pageData,
         content: newHtml
       });
     } catch (e) {
       console.error(e);
-      const errorMessage = e instanceof Error ? e.message : String(e);
-      if (errorMessage.includes('Requested entity was not found')) {
+      let errorMessage = '';
+      if (e instanceof Error) {
+        errorMessage = e.message;
+      } else if (typeof e === 'object' && e !== null) {
+        try {
+          errorMessage = JSON.stringify(e);
+        } catch {
+          errorMessage = String(e);
+        }
+      } else {
+        errorMessage = String(e);
+      }
+      let displayMessage = errorMessage;
+      try {
+        const parsed = JSON.parse(errorMessage);
+        if (parsed.error && parsed.error.message) {
+          displayMessage = parsed.error.message;
+          try {
+            const innerParsed = JSON.parse(displayMessage);
+            if (innerParsed.error && innerParsed.error.message) {
+              displayMessage = innerParsed.error.message;
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+      
+      if (displayMessage.includes('Requested entity was not found')) {
           setHasKey(false);
-      } else if (errorMessage.includes('429') || errorMessage.includes('quota') || errorMessage.includes('RESOURCE_EXHAUSTED')) {
+      } else if (displayMessage.includes('429') || displayMessage.includes('quota') || displayMessage.includes('RESOURCE_EXHAUSTED')) {
+          // Do not block the UI, just throw so DevToolsPanel can catch it
+      } else if (displayMessage.includes('token count exceeds') || displayMessage.includes('400')) {
           // Do not block the UI, just throw so DevToolsPanel can catch it
       }
-      throw e;
+      throw new Error(displayMessage);
     } finally {
       setIsRefining(false);
     }
@@ -596,6 +704,7 @@ const App: React.FC = () => {
         currentUrl={currentUrl}
         isLoading={loading}
         model={model}
+        deviceType={deviceType}
         onNavigate={(url) => navigateTo(url)}
         onBack={handleBack}
         onForward={handleForward}
@@ -604,6 +713,7 @@ const App: React.FC = () => {
         onDownload={handleDownload}
         canDownload={!!pageData && !loading}
         onSetModel={setModel}
+        onSetDeviceType={setDeviceType}
         canGoBack={historyIndex > 0}
         canGoForward={historyIndex < history.length - 1}
         onToggleHistory={() => setIsHistoryOpen(!isHistoryOpen)}
@@ -613,6 +723,8 @@ const App: React.FC = () => {
         onToggleBookmark={handleToggleBookmark}
         isDeepResearch={deepResearch}
         onToggleDeepResearch={() => setDeepResearch(!deepResearch)}
+        isSoundEnabled={soundEnabled}
+        onToggleSound={() => setSoundEnabled(!soundEnabled)}
         history={history}
         bookmarks={bookmarks}
         onHome={handleHome}
@@ -690,6 +802,7 @@ const App: React.FC = () => {
               htmlContent={pageData.content} 
               title={pageData.title}
               isLoading={loading}
+              deviceType={deviceType}
               onNavigate={handleIframeNavigate}
               onSelectKey={handleSelectKey}
               onStateUpdate={handleStateUpdate}

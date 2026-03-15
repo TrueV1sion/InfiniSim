@@ -37,6 +37,24 @@ const INJECTED_SCRIPT = `
 
     document.addEventListener('change', syncState);
 
+    // Override native dialogs with SweetAlert2 if available
+    if (window.Swal) {
+      window.alert = function(message) {
+        Swal.fire({ text: message, confirmButtonColor: '#3b82f6' });
+      };
+      window.confirm = function(message) {
+        // Note: Native confirm is synchronous, Swal is async. 
+        // We can't perfectly polyfill synchronous confirm, but we can try to warn or just return true for AI scripts that don't await.
+        // For best results, AI should use Swal directly, but this catches basic usages.
+        console.warn('window.confirm is deprecated in InfiniteWeb. Use Swal.fire() instead.');
+        return true; 
+      };
+      window.prompt = function(message, defaultText) {
+        console.warn('window.prompt is deprecated in InfiniteWeb. Use Swal.fire() instead.');
+        return defaultText || null;
+      };
+    }
+
     // Provide a global navigation function for the AI to use
     window.navigateTo = function(url) {
       window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: url, state: getBrowserState() }, '*');
@@ -117,14 +135,27 @@ You are InfiniteWeb 4.0, the world's most advanced generative web engine. You do
 3. **Dynamic Content**: Hallucinate realistic real-time updates using JS intervals. Timestamps should update, stock tickers should fluctuate, news feeds should rotate, and social media feeds should simulate incoming posts or notifications.
 4. **Variety of Website Types**: Be prepared to generate highly authentic e-commerce platforms (with working carts), social media networks (with interactive feeds), news portals (with breaking news banners), SaaS dashboards, and immersive 3D experiences.
 5. **Realistic Network Latency**: Simulate realistic network latency *within* the generated page. Use skeleton loaders, spinners, or progress bars initially, then use \`setTimeout\` (e.g., 800ms - 2000ms) to "fetch" and reveal the actual content, making it feel like a real web application loading data from a server.
-6. **Library Ecosystem**: 
-   - UI/State: Use Alpine.js for lightweight, declarative interactivity like modals, tabs, and dropdowns (<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>).
-   - Icons: Use Lucide Icons (<script src="https://unpkg.com/lucide@latest"></script> followed by lucide.createIcons()).
-   - Animations: Use GSAP for cinematic transitions (<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>).
-   - Charts: Use Chart.js for data visualization (<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>).
-   - Maps: Use Leaflet.js for interactive maps (<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" /><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>).
-   - 3D/WebGL: Use Three.js for creative 3D experiences (<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>) or PlayCanvas for full game engines (<script src="https://code.playcanvas.com/playcanvas-latest.js"></script>).
-   - 2D Physics: Use Matter.js for 2D physics simulations and games (<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>).
+6. **Responsive Design**: The user can toggle between Desktop, Tablet, and Mobile views. You MUST ensure your Tailwind classes are fully responsive (e.g., use \`md:\`, \`lg:\` prefixes) so the layout adapts perfectly to any device width.
+7. **Library Ecosystem**: 
+   The following libraries are PRE-INSTALLED in the environment. DO NOT output their <script> tags. Just use them directly:
+   - Tailwind CSS (Global classes)
+   - DaisyUI (Tailwind components: \`btn\`, \`card\`, \`modal\`, etc. are ready to use!)
+   - Alpine.js (UI/State: \`x-data\`, \`x-show\`, etc.)
+   - Lucide Icons (Call \`lucide.createIcons()\` to render)
+   - GSAP (Animations: \`gsap.to()\`)
+   - Chart.js (Data visualization: \`new Chart()\`)
+   - Faker.js (Mock data: \`window.faker\`)
+   - SortableJS (Drag & Drop: \`new Sortable()\`)
+   - Howler.js (Audio/SFX: \`new Howl()\`)
+   - Tone.js (Procedural Music/Synths: \`new Tone.Synth()\`)
+   - Marked.js (Markdown: \`marked.parse()\`)
+   - Canvas Confetti (Delight: \`confetti()\`)
+   - SweetAlert2 (Dialogs: \`Swal.fire()\`. Note: native \`alert\`/\`confirm\` are overridden to use Swal)
+   
+   For the following specialized libraries, you MUST include their <script> tags if you need them:
+   - Maps: Leaflet.js (<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" /><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>)
+   - 3D/WebGL: Three.js (<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>) or PlayCanvas (<script src="https://code.playcanvas.com/playcanvas-latest.js"></script>)
+   - 2D Physics: Matter.js (<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>)
 
 ### GAME ENGINE (PLAYCANVAS) SPECIFICS:
 When a URL or prompt implies a game or 3D world:
@@ -144,8 +175,30 @@ When a URL or prompt implies a game or 3D world:
 - NO markdown wrappers. NO explanations. NO code blocks. JUST CODE.
 `;
 
+export const PRELOADED_SCRIPTS = `
+<!-- Preloaded Standard Libraries -->
+<link href="https://cdn.jsdelivr.net/npm/daisyui@4.10.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/howler/2.2.4/howler.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script type="module">import { faker } from 'https://esm.sh/@faker-js/faker'; window.faker = faker;</script>
+`;
+
 export const cleanHtml = (html: string) => {
     html = html.replace(/^\s*```html\n?/i, '').replace(/\n?```\s*$/, '').trim();
+    
+    if (!html.includes('cdn.tailwindcss.com')) {
+        html = PRELOADED_SCRIPTS + '\n' + html;
+    }
+
     if (html.includes('</body>') && !html.includes('INFINITE_WEB_NAVIGATE')) {
       html = html.replace('</body>', `${INJECTED_SCRIPT}</body>`);
     } else if (!html.includes('INFINITE_WEB_NAVIGATE')) {
@@ -158,25 +211,36 @@ export const generatePageContentStream = async function* (
   url: string,
   model: ModelTier,
   isDeepResearch: boolean = false,
-  virtualState?: any
+  virtualState?: any,
+  deviceType: 'desktop' | 'tablet' | 'mobile' | 'vr' | 'ar' = 'desktop',
+  soundEnabled: boolean = false
 ): AsyncGenerator<string, void, unknown> {
   const apiKey = process.env.API_KEY;
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
   
-  const stateString = virtualState && Object.keys(virtualState).length > 0 
+  let stateString = virtualState && Object.keys(virtualState).length > 0 
     ? JSON.stringify(virtualState) 
     : 'None';
+  if (stateString.length > 50000) {
+    stateString = stateString.substring(0, 50000) + '... [TRUNCATED DUE TO SIZE]';
+  }
 
   const prompt = `
     [REQUEST_TYPE: SERVER_GET_STREAM]
     [TARGET_URL: "${url}"]
     [BROWSER_USER_AGENT: "InfiniteWeb/4.0 (LatentSpace; Interactive)"]
+    [DEVICE_TYPE: "${deviceType}"]
+    [SOUND_ENABLED: ${soundEnabled ? 'TRUE' : 'FALSE'}]
     [DEEP_RESEARCH_MODE: ${isDeepResearch ? 'ENABLED' : 'DISABLED'}]
     [CURRENT_BROWSER_STATE: ${stateString}]
     
     TASK: Execute the generation of the page at the target URL. 
+    CRITICAL DEVICE INSTRUCTION: The user is viewing this on a ${deviceType} screen. You MUST optimize the layout, typography, and interactive elements specifically for ${deviceType}. Use Tailwind's responsive prefixes (sm:, md:, lg:) appropriately, but ensure the default/base classes look perfect for ${deviceType}.
+    ${deviceType === 'vr' ? "CRITICAL VR INSTRUCTION: This is a Virtual Reality experience. You MUST use A-Frame (<script src=\"https://aframe.io/releases/1.4.2/aframe.min.js\"></script>) or Three.js to render a fully immersive 3D environment. Include interactive 3D objects, a skybox, and camera controls." : ""}
+    ${deviceType === 'ar' ? "CRITICAL AR INSTRUCTION: This is an Augmented Reality experience. You MUST use A-Frame with AR.js or WebXR to render an AR scene. The background of the iframe is transparent, so do NOT render a skybox or solid background color. Render 3D objects floating in space." : ""}
+    ${soundEnabled ? "CRITICAL AUDIO INSTRUCTION: Sound is ENABLED. You MUST integrate rich audio features. Use Tone.js for procedural background music or synthesizers, and Howler.js for UI sound effects. Create an immersive soundscape that reacts to user interactions. Make sure audio context is started on first user interaction." : ""}
     CRITICAL STATE INSTRUCTION: If CURRENT_BROWSER_STATE is provided and contains data (e.g., localStorage, sessionStorage, cookies), you MUST render the page to reflect this state.
     CRITICAL IMAGE INSTRUCTION: To include images, you MUST use the attribute \`data-ai-prompt="<detailed image description>"\` on \`<img>\` tags instead of a real src. The system will generate these images in real-time. Example: \`<img data-ai-prompt="A futuristic cyberpunk neon sign" src="" alt="Neon sign" />\`
     ${isDeepResearch ? "CRITICAL: Perform deep architectural reasoning. Ensure every single JS component is flawless and robust. Optimize for maximum visual fidelity." : ""}
@@ -263,26 +327,37 @@ export const generatePageContent = async (
   url: string,
   model: ModelTier,
   isDeepResearch: boolean = false,
-  virtualState?: any
+  virtualState?: any,
+  deviceType: 'desktop' | 'tablet' | 'mobile' | 'vr' | 'ar' = 'desktop',
+  soundEnabled: boolean = false
 ): Promise<string> => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
   
-  const stateString = virtualState && Object.keys(virtualState).length > 0 
+  let stateString = virtualState && Object.keys(virtualState).length > 0 
     ? JSON.stringify(virtualState) 
     : 'None';
+  if (stateString.length > 50000) {
+    stateString = stateString.substring(0, 50000) + '... [TRUNCATED DUE TO SIZE]';
+  }
 
   // Enhance the prompt with "environmental" cues to help the AI contextualize its "server" role
   const prompt = `
     [REQUEST_TYPE: SERVER_GET]
     [TARGET_URL: "${url}"]
     [BROWSER_USER_AGENT: "InfiniteWeb/4.0 (LatentSpace; Interactive)"]
+    [DEVICE_TYPE: "${deviceType}"]
+    [SOUND_ENABLED: ${soundEnabled ? 'TRUE' : 'FALSE'}]
     [DEEP_RESEARCH_MODE: ${isDeepResearch ? 'ENABLED' : 'DISABLED'}]
     [CURRENT_BROWSER_STATE: ${stateString}]
     
     TASK: Execute the generation of the page at the target URL. 
+    CRITICAL DEVICE INSTRUCTION: The user is viewing this on a ${deviceType} screen. You MUST optimize the layout, typography, and interactive elements specifically for ${deviceType}. Use Tailwind's responsive prefixes (sm:, md:, lg:) appropriately, but ensure the default/base classes look perfect for ${deviceType}.
+    ${deviceType === 'vr' ? "CRITICAL VR INSTRUCTION: This is a Virtual Reality experience. You MUST use A-Frame (<script src=\"https://aframe.io/releases/1.4.2/aframe.min.js\"></script>) or Three.js to render a fully immersive 3D environment. Include interactive 3D objects, a skybox, and camera controls." : ""}
+    ${deviceType === 'ar' ? "CRITICAL AR INSTRUCTION: This is an Augmented Reality experience. You MUST use A-Frame with AR.js or WebXR to render an AR scene. The background of the iframe is transparent, so do NOT render a skybox or solid background color. Render 3D objects floating in space." : ""}
+    ${soundEnabled ? "CRITICAL AUDIO INSTRUCTION: Sound is ENABLED. You MUST integrate rich audio features. Use Tone.js for procedural background music or synthesizers, and Howler.js for UI sound effects. Create an immersive soundscape that reacts to user interactions. Make sure audio context is started on first user interaction." : ""}
     CRITICAL STATE INSTRUCTION: If CURRENT_BROWSER_STATE is provided and contains data (e.g., localStorage, sessionStorage, cookies), you MUST render the page to reflect this state. For example, if the state indicates the user is logged in, render the authenticated dashboard/profile. If the state contains shopping cart items, render the cart with those items.
     ${isDeepResearch ? "CRITICAL: Perform deep architectural reasoning. Ensure every single JS component is flawless and robust. Optimize for maximum visual fidelity." : ""}
     If this is a known brand site, simulate its high-fidelity alternative universe version.
@@ -310,7 +385,9 @@ export const generatePageContent = async (
 export const refinePageContent = async (
   currentHtml: string,
   instruction: string,
-  model: ModelTier
+  model: ModelTier,
+  deviceType: 'desktop' | 'tablet' | 'mobile' | 'vr' | 'ar' = 'desktop',
+  soundEnabled: boolean = false
 ): Promise<string> => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) throw new Error("API Key not found");
@@ -320,8 +397,14 @@ export const refinePageContent = async (
   const prompt = `
     [REQUEST_TYPE: CODE_REFINEMENT]
     [INSTRUCTION: "${instruction}"]
+    [DEVICE_TYPE: "${deviceType}"]
+    [SOUND_ENABLED: ${soundEnabled ? 'TRUE' : 'FALSE'}]
 
     TASK: Modify the existing HTML source to satisfy the user's request. 
+    CRITICAL DEVICE INSTRUCTION: The user is viewing this on a ${deviceType} screen. You MUST optimize the layout, typography, and interactive elements specifically for ${deviceType}. Use Tailwind's responsive prefixes (sm:, md:, lg:) appropriately, but ensure the default/base classes look perfect for ${deviceType}.
+    ${deviceType === 'vr' ? "CRITICAL VR INSTRUCTION: This is a Virtual Reality experience. You MUST use A-Frame (<script src=\"https://aframe.io/releases/1.4.2/aframe.min.js\"></script>) or Three.js to render a fully immersive 3D environment. Include interactive 3D objects, a skybox, and camera controls." : ""}
+    ${deviceType === 'ar' ? "CRITICAL AR INSTRUCTION: This is an Augmented Reality experience. You MUST use A-Frame with AR.js or WebXR to render an AR scene. The background of the iframe is transparent, so do NOT render a skybox or solid background color. Render 3D objects floating in space." : ""}
+    ${soundEnabled ? "CRITICAL AUDIO INSTRUCTION: Sound is ENABLED. You MUST integrate rich audio features. Use Tone.js for procedural background music or synthesizers, and Howler.js for UI sound effects. Create an immersive soundscape that reacts to user interactions. Make sure audio context is started on first user interaction." : ""}
     Keep all injected bridge scripts intact. 
     Maintain the design system.
     Return the FULL updated HTML source.
