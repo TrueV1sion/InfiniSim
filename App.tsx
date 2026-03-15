@@ -18,7 +18,7 @@ import { useDownloads } from './hooks/useDownloads';
 import { parseGeminiError, categorizeError, type ErrorCategory } from './utils/errorParser';
 import { collection, addDoc } from 'firebase/firestore';
 import { db } from './firebase';
-import { getUserApiKey } from './supabase';
+import { getLocalApiKey, syncApiKeyToSupabase, loadApiKeyFromSupabase } from './services/apiKeyService';
 
 const LOADING_MESSAGES = [
   'Synthesizing latent reality...',
@@ -59,17 +59,26 @@ const App: React.FC = () => {
   useFirestoreSync(user, isAuthReady, { history, bookmarks, downloads, virtualState });
 
   useEffect(() => {
-    if (!user) {
-      setUserHasApiKey(false);
-      return;
+    const localKey = getLocalApiKey();
+    setUserHasApiKey(!!localKey);
+    if (!localKey) {
+      setShowApiKeyModal(true);
     }
-    getUserApiKey(user.uid).then((key) => {
-      const hasKey = !!key;
-      setUserHasApiKey(hasKey);
-      if (!hasKey) {
-        setShowApiKeyModal(true);
-      }
-    });
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const localKey = getLocalApiKey();
+    if (localKey) {
+      syncApiKeyToSupabase(user.uid).catch(() => {});
+    } else {
+      loadApiKeyFromSupabase(user.uid).then((loaded) => {
+        if (loaded) {
+          setUserHasApiKey(true);
+          setShowApiKeyModal(false);
+        }
+      });
+    }
   }, [user]);
 
   const buildErrorHtml = useCallback((category: ErrorCategory, displayMessage: string, url: string, currentModel: ModelTier) => {
@@ -319,7 +328,11 @@ const App: React.FC = () => {
                 onStateUpdate={nav.handleStateUpdate}
               />
             ) : !nav.loading && (
-              <EmptyState onNavigate={(url) => nav.navigateTo(url)} />
+              <EmptyState
+                onNavigate={(url) => nav.navigateTo(url)}
+                hasApiKey={userHasApiKey}
+                onSetupApiKey={() => setShowApiKeyModal(true)}
+              />
             )}
           </ErrorBoundary>
         </div>
@@ -339,17 +352,15 @@ const App: React.FC = () => {
         )}
       </div>
 
-      {user && (
-        <ApiKeyModal
-          isOpen={showApiKeyModal}
-          onClose={() => setShowApiKeyModal(false)}
-          onSuccess={() => {
-            setUserHasApiKey(true);
-            setShowApiKeyModal(false);
-          }}
-          userId={user.uid}
-        />
-      )}
+      <ApiKeyModal
+        isOpen={showApiKeyModal}
+        onClose={() => setShowApiKeyModal(false)}
+        onSuccess={() => {
+          setUserHasApiKey(true);
+          setShowApiKeyModal(false);
+        }}
+        userId={user?.uid}
+      />
     </div>
   );
 };

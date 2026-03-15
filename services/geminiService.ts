@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { ModelTier } from "../types";
-import { getUserApiKey } from "../supabase";
+import { resolveApiKey } from "./apiKeyService";
 import { pruneVirtualState } from "../utils/statePruner";
 
 // The "Standard Library" injected into every generated page to handle navigation and bridge the AI to the browser chrome.
@@ -233,17 +233,11 @@ export const generatePageContentStream = async function* (
   soundEnabled: boolean = false,
   userId?: string
 ): AsyncGenerator<string, void, unknown> {
-  let apiKey = process.env.API_KEY;
-
-  if (userId) {
-    const userKey = await getUserApiKey(userId);
-    if (userKey) apiKey = userKey;
-  }
-
+  const apiKey = await resolveApiKey(userId);
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
-  
+
   const pruned = virtualState ? pruneVirtualState(virtualState) : null;
   const stateString = pruned && Object.keys(pruned).length > 0
     ? JSON.stringify(pruned)
@@ -292,13 +286,7 @@ export const generatePageContentStream = async function* (
 };
 
 export const generateImage = async (prompt: string, userId?: string): Promise<string> => {
-  let apiKey = process.env.API_KEY;
-
-  if (userId) {
-    const userKey = await getUserApiKey(userId);
-    if (userKey) apiKey = userKey;
-  }
-
+  const apiKey = await resolveApiKey(userId);
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
@@ -376,23 +364,16 @@ export const generatePageContent = async (
   soundEnabled: boolean = false,
   userId?: string
 ): Promise<string> => {
-  let apiKey = process.env.API_KEY;
-
-  if (userId) {
-    const userKey = await getUserApiKey(userId);
-    if (userKey) apiKey = userKey;
-  }
-
+  const apiKey = await resolveApiKey(userId);
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
-  
+
   const pruned = virtualState ? pruneVirtualState(virtualState) : null;
   const stateString = pruned && Object.keys(pruned).length > 0
     ? JSON.stringify(pruned)
     : 'None';
 
-  // Enhance the prompt with "environmental" cues to help the AI contextualize its "server" role
   const prompt = `
     [REQUEST_TYPE: SERVER_GET]
     [TARGET_URL: "${url}"]
@@ -439,13 +420,7 @@ export const refinePageContent = async (
   soundEnabled: boolean = false,
   userId?: string
 ): Promise<string> => {
-  let apiKey = process.env.API_KEY;
-
-  if (userId) {
-    const userKey = await getUserApiKey(userId);
-    if (userKey) apiKey = userKey;
-  }
-
+  const apiKey = await resolveApiKey(userId);
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });

@@ -11,14 +11,16 @@ const SUGGESTIONS = [
 
 interface EmptyStateProps {
     onNavigate: (url: string) => void;
+    hasApiKey?: boolean;
+    onSetupApiKey?: () => void;
 }
 
-const EmptyState: React.FC<EmptyStateProps> = ({ onNavigate }) => {
+const EmptyState: React.FC<EmptyStateProps> = ({ onNavigate, hasApiKey, onSetupApiKey }) => {
   return (
     <div className="flex-1 flex flex-col items-center justify-center bg-[#050505] text-white p-8 overflow-y-auto">
         <div className="max-w-2xl w-full text-center space-y-8">
             <div className="space-y-4">
-                <h1 className="text-6xl font-extrabold tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500 animate-pulse-slow">
+                <h1 className="text-6xl font-extrabold tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-cyan-400 to-teal-400">
                     InfiniteWeb
                 </h1>
                 <p className="text-xl text-gray-400 font-light leading-relaxed">
@@ -27,12 +29,37 @@ const EmptyState: React.FC<EmptyStateProps> = ({ onNavigate }) => {
                 </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
+            {!hasApiKey && (
+              <div className="mx-auto max-w-md">
+                <button
+                  onClick={onSetupApiKey}
+                  className="w-full group relative overflow-hidden p-5 rounded-2xl bg-gradient-to-br from-blue-600/20 to-cyan-600/10 border border-blue-500/30 hover:border-blue-400/50 transition-all duration-300 shadow-lg shadow-blue-500/5 hover:shadow-blue-500/10"
+                >
+                  <div className="flex items-center justify-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center shrink-0">
+                      <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                      </svg>
+                    </div>
+                    <div className="text-left">
+                      <div className="text-white font-semibold text-base">Add your Gemini API key</div>
+                      <div className="text-white/40 text-sm">Free to get, takes 30 seconds</div>
+                    </div>
+                    <svg className="w-5 h-5 text-blue-400/60 group-hover:text-blue-400 group-hover:translate-x-0.5 transition-all ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </div>
+                </button>
+              </div>
+            )}
+
+            <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 text-left ${!hasApiKey ? 'opacity-40 pointer-events-none' : ''}`}>
                 {SUGGESTIONS.map((s) => (
-                    <button 
+                    <button
                         key={s.url}
                         onClick={() => onNavigate(s.url)}
-                        className="group p-5 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-blue-500/50 transition-all duration-500 flex items-center justify-between shadow-lg hover:shadow-blue-500/10"
+                        disabled={!hasApiKey}
+                        className="group p-5 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-blue-500/50 transition-all duration-500 flex items-center justify-between shadow-lg hover:shadow-blue-500/10 disabled:cursor-not-allowed"
                     >
                         <div className="flex items-center gap-4">
                             <span className="text-2xl grayscale group-hover:grayscale-0 transition-all duration-300">{s.icon}</span>
@@ -52,7 +79,7 @@ const EmptyState: React.FC<EmptyStateProps> = ({ onNavigate }) => {
                     <span className="text-xs font-mono tracking-widest uppercase">Gemini 3.0 Flash</span>
                 </div>
                 <div className="flex items-center gap-3">
-                    <div className="w-2.5 h-2.5 rounded-full bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.5)]"></div>
+                    <div className="w-2.5 h-2.5 rounded-full bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.5)]"></div>
                     <span className="text-xs font-mono tracking-widest uppercase">Gemini 3.0 Pro</span>
                 </div>
                 <div className="flex items-center gap-3">
