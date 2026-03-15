@@ -8,11 +8,10 @@ interface BrowserViewportProps {
   isLoading?: boolean;
   deviceType?: DeviceType;
   onNavigate: (url: string, state?: any) => void;
-  onSelectKey?: () => void;
   onStateUpdate?: (state: any) => void;
 }
 
-const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, isLoading, deviceType = 'desktop', onNavigate, onSelectKey, onStateUpdate }) => {
+const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, isLoading, deviceType = 'desktop', onNavigate, onStateUpdate }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const previousHtmlRef = useRef('');
   const isDocOpenRef = useRef(false);
@@ -55,8 +54,6 @@ const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, i
       if (event.data && event.data.type === 'INFINITE_WEB_NAVIGATE') {
         const targetUrl = event.data.url;
         onNavigate(targetUrl, event.data.state);
-      } else if (event.data && event.data.type === 'INFINITE_WEB_SELECT_KEY' && onSelectKey) {
-        onSelectKey();
       } else if (event.data && event.data.type === 'INFINITE_WEB_STATE_UPDATE' && onStateUpdate) {
         onStateUpdate(event.data.state);
       }
@@ -64,7 +61,7 @@ const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, i
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [onNavigate, onSelectKey, onStateUpdate]);
+  }, [onNavigate, onStateUpdate]);
 
   const getDeviceStyles = () => {
     switch (deviceType) {

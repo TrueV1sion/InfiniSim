@@ -5,7 +5,6 @@ import EmptyState from './components/EmptyState';
 import HistoryPanel from './components/HistoryPanel';
 import DevToolsPanel from './components/DevToolsPanel';
 import DownloadsPanel from './components/DownloadsPanel';
-import ApiKeyModal from './components/ApiKeyModal';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ModelTier, HistoryItem, Bookmark, DownloadItem } from './types';
 import { refinePageContent } from './services/geminiService';
@@ -14,9 +13,8 @@ import { usePersistedState } from './hooks/usePersistedState';
 import { useFirebaseAuth } from './hooks/useFirebaseAuth';
 import { useFirestoreSync } from './hooks/useFirestoreSync';
 import { useNavigation } from './hooks/useNavigation';
-import { useApiKey } from './hooks/useApiKey';
 import { useDownloads } from './hooks/useDownloads';
-import { parseGeminiError, categorizeError, ErrorCategory } from './utils/errorParser';
+import { parseGeminiError, categorizeError, type ErrorCategory } from './utils/errorParser';
 import { collection, addDoc } from 'firebase/firestore';
 import { db } from './firebase';
 
@@ -45,34 +43,30 @@ const App: React.FC = () => {
   const [isDownloadsOpen, setIsDownloadsOpen] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
 
-  const { user, isAuthReady, userHasApiKey, setUserHasApiKey } = useFirebaseAuth(
+  const { user, isAuthReady } = useFirebaseAuth(
     (data) => {
       if (data.history) setHistory(data.history);
       if (data.bookmarks) setBookmarks(data.bookmarks);
       if (data.downloads) setDownloads(data.downloads);
       if (data.virtualState) setVirtualState(data.virtualState);
-    },
-    () => apiKey.setHasKey(true)
+    }
   );
-
-  const apiKey = useApiKey(user, userHasApiKey, setUserHasApiKey);
 
   useFirestoreSync(user, isAuthReady, { history, bookmarks, downloads, virtualState });
 
   const buildErrorHtml = useCallback((category: ErrorCategory, displayMessage: string, url: string, currentModel: ModelTier) => {
     const templates: Record<ErrorCategory, { title: string; msg: string; color: string; buttons: string }> = {
       api_key_missing: {
-        title: 'API Key Required',
-        msg: 'Your API key was not found or is invalid. Please provide a valid key to continue.',
+        title: 'Service Unavailable',
+        msg: 'The AI service is temporarily unavailable. Please try again later.',
         color: 'blue',
-        buttons: `<button onclick="window.parent.postMessage({ type: 'INFINITE_WEB_SELECT_KEY' }, '*')" class="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl transition-all font-semibold shadow-lg shadow-blue-600/20">Provide API Key</button>`,
+        buttons: `<button onclick="window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: '${url}' }, '*')" class="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl transition-all font-semibold shadow-lg shadow-blue-600/20">Retry</button>`,
       },
       quota_exceeded: {
         title: 'Quota Exceeded',
-        msg: `You have exceeded the quota for the current model (${currentModel}). Please switch to the Flash model or provide your own API key.`,
+        msg: `You have exceeded the quota for the current model (${currentModel}). Please try switching to the Flash model.`,
         color: 'red',
         buttons: `
-          <button onclick="window.parent.postMessage({ type: 'INFINITE_WEB_SELECT_KEY' }, '*')" class="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl transition-all font-semibold shadow-lg shadow-blue-600/20">Provide API Key</button>
           <button onclick="window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: '${url}' }, '*')" class="w-full py-3 bg-white/10 hover:bg-white/20 rounded-xl transition-all font-semibold">Retry</button>
         `,
       },
@@ -105,23 +99,21 @@ const App: React.FC = () => {
   }, []);
 
   const handleNavigationError = useCallback((category: ErrorCategory, displayMessage: string, url: string) => {
-    if (category === 'api_key_missing') {
-      if (user && !userHasApiKey) {
-        apiKey.setShowApiKeyModal(true);
-      } else {
-        apiKey.setHasKey(false);
-      }
-      return;
-    }
+    const titleMap: Record<ErrorCategory, string> = {
+      api_key_missing: 'Service Unavailable',
+      quota_exceeded: 'Quota Exceeded',
+      context_limit: 'Context Limit Reached',
+      generic: 'Error',
+    };
 
     nav.setPageData({
       url,
       content: buildErrorHtml(category, displayMessage, url, model),
-      title: category === 'quota_exceeded' ? 'Quota Exceeded' : category === 'context_limit' ? 'Context Limit Reached' : 'Error',
+      title: titleMap[category],
       isLoading: false,
       generatedBy: model,
     });
-  }, [user, userHasApiKey, model, buildErrorHtml]);
+  }, [model, buildErrorHtml]);
 
   const nav = useNavigation({
     history, setHistory, historyIndex, setHistoryIndex,
@@ -148,14 +140,6 @@ const App: React.FC = () => {
       nav.setPageData({ ...nav.pageData, content: newHtml });
     } catch (e) {
       const displayMessage = parseGeminiError(e);
-      const category = categorizeError(displayMessage);
-      if (category === 'api_key_missing') {
-        if (user && !userHasApiKey) {
-          apiKey.setShowApiKeyModal(true);
-        } else {
-          apiKey.setHasKey(false);
-        }
-      }
       throw new Error(displayMessage);
     } finally {
       setIsRefining(false);
@@ -200,30 +184,6 @@ const App: React.FC = () => {
     nav.setPageData(null);
   };
 
-  if (!apiKey.hasKey) {
-    return (
-      <div className="flex flex-col items-center justify-center h-screen w-screen bg-[#050505] text-white">
-        <div className="max-w-md w-full p-8 rounded-3xl bg-white/5 border border-white/10 backdrop-blur-3xl text-center shadow-[0_0_50px_rgba(59,130,246,0.1)]">
-          <div className="w-16 h-16 bg-blue-500/10 text-blue-500 rounded-2xl flex items-center justify-center mb-6 mx-auto">
-            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
-          </div>
-          <h1 className="text-2xl font-bold mb-4">API Key Required</h1>
-          <p className="text-gray-400 mb-8 text-sm leading-relaxed">
-            To use InfiniteWeb and avoid rate limits, please select your Google Cloud API key.
-            <br/><br/>
-            <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 transition-colors underline underline-offset-4">Learn more about billing</a>
-          </p>
-          <button
-            onClick={apiKey.handleSelectKey}
-            className="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl transition-all font-semibold shadow-lg shadow-blue-600/20"
-          >
-            Select API Key
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col h-screen w-screen bg-[#050505]">
       <AddressBar
@@ -261,7 +221,6 @@ const App: React.FC = () => {
         onLogout={logout}
         onPublish={handlePublish}
         canPublish={!!user && !!nav.pageData && nav.currentUrl !== 'infinite://directory'}
-        onOpenApiKeySettings={apiKey.handleOpenApiKeySettings}
       />
 
       <div className="flex-1 relative overflow-hidden flex flex-row">
@@ -337,7 +296,6 @@ const App: React.FC = () => {
                 isLoading={nav.loading}
                 deviceType={deviceType}
                 onNavigate={nav.handleIframeNavigate}
-                onSelectKey={apiKey.handleSelectKey}
                 onStateUpdate={nav.handleStateUpdate}
               />
             ) : !nav.loading && (
@@ -361,14 +319,6 @@ const App: React.FC = () => {
         )}
       </div>
 
-      {user && (
-        <ApiKeyModal
-          isOpen={apiKey.showApiKeyModal}
-          onClose={() => apiKey.setShowApiKeyModal(false)}
-          onSuccess={apiKey.handleApiKeySuccess}
-          userId={user.uid}
-        />
-      )}
     </div>
   );
 };

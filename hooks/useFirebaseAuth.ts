@@ -1,8 +1,7 @@
-import { useState, useEffect, Dispatch, SetStateAction } from 'react';
+import { useState, useEffect } from 'react';
 import { auth, db } from '../firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
-import { getUserApiKey } from '../supabase';
 import { HistoryItem, Bookmark, DownloadItem } from '../types';
 
 interface AuthData {
@@ -15,17 +14,13 @@ interface AuthData {
 interface UseFirebaseAuthResult {
   user: User | null;
   isAuthReady: boolean;
-  userHasApiKey: boolean;
-  setUserHasApiKey: Dispatch<SetStateAction<boolean>>;
 }
 
 export function useFirebaseAuth(
-  onDataLoaded: (data: AuthData) => void,
-  onApiKeyFound: () => void
+  onDataLoaded: (data: AuthData) => void
 ): UseFirebaseAuthResult {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
-  const [userHasApiKey, setUserHasApiKey] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -44,12 +39,6 @@ export function useFirebaseAuth(
               virtualState: data.virtualState,
             });
           }
-
-          const apiKey = await getUserApiKey(currentUser.uid);
-          setUserHasApiKey(!!apiKey);
-          if (apiKey) {
-            onApiKeyFound();
-          }
         } catch (error) {
           console.error('Error fetching user data:', error);
         }
@@ -58,5 +47,5 @@ export function useFirebaseAuth(
     return () => unsubscribe();
   }, []);
 
-  return { user, isAuthReady, userHasApiKey, setUserHasApiKey };
+  return { user, isAuthReady };
 }
