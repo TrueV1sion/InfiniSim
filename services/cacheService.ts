@@ -35,6 +35,11 @@ export async function getCachedPage(cacheKey: string): Promise<string | null> {
   }
 }
 
+function extractTitleFromHtml(html: string): string {
+  const match = html.match(/<title[^>]*>(.*?)<\/title>/i);
+  return match ? match[1].trim() : '';
+}
+
 export async function setCachedPage(
   cacheKey: string,
   url: string,
@@ -49,10 +54,35 @@ export async function setCachedPage(
         url,
         model,
         html_content: html,
+        title: extractTitleFromHtml(html),
         created_at: new Date().toISOString(),
         hit_count: 0,
       }, { onConflict: 'cache_key' });
   } catch {
     // cache write failure is non-critical
+  }
+}
+
+export interface TrendingPage {
+  url: string;
+  title: string;
+  hit_count: number;
+  model: string;
+  created_at: string;
+}
+
+export async function getTrendingPages(count = 8): Promise<TrendingPage[]> {
+  try {
+    const { data, error } = await supabase
+      .from('page_cache')
+      .select('url, title, hit_count, model, created_at')
+      .gt('hit_count', 0)
+      .order('hit_count', { ascending: false })
+      .limit(count);
+
+    if (error || !data) return [];
+    return data as TrendingPage[];
+  } catch {
+    return [];
   }
 }

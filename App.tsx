@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import AddressBar from './components/AddressBar';
 import BrowserViewport from './components/BrowserViewport';
-import EmptyState from './components/EmptyState';
+import Homepage from './components/Homepage';
+import { useHomepageData } from './hooks/useHomepageData';
 import HistoryPanel from './components/HistoryPanel';
 import DevToolsPanel from './components/DevToolsPanel';
 import DownloadsPanel from './components/DownloadsPanel';
@@ -150,6 +151,9 @@ const App: React.FC = () => {
 
   const { toasts, addToast, removeToast } = useToast();
   const addressBarRef = useRef<HTMLInputElement>(null);
+
+  const isHomepage = !nav.currentUrl && !nav.loading && !nav.pageData;
+  const { trending, community, isLoading: isHomepageDataLoading } = useHomepageData(isHomepage);
 
   const handleToggleBookmark = useCallback(() => {
     if (!nav.currentUrl) return;
@@ -338,10 +342,19 @@ const App: React.FC = () => {
                 onStateUpdate={nav.handleStateUpdate}
               />
             ) : !nav.loading && (
-              <EmptyState
+              <Homepage
                 onNavigate={(url) => nav.navigateTo(url)}
                 hasApiKey={userHasApiKey}
                 onSetupApiKey={() => setShowApiKeyModal(true)}
+                history={history}
+                bookmarks={bookmarks}
+                userName={user?.displayName || undefined}
+                model={model}
+                deviceType={deviceType}
+                deepResearch={deepResearch}
+                trending={trending}
+                community={community}
+                isDataLoading={isHomepageDataLoading}
               />
             )}
           </ErrorBoundary>
