@@ -37,6 +37,8 @@ interface AddressBarProps {
   onLogout: () => void;
   onPublish: () => void;
   canPublish: boolean;
+  onOpenApiKeySettings?: () => void;
+  hasApiKey?: boolean;
 }
 
 const AddressBar: React.FC<AddressBarProps> = ({
@@ -73,7 +75,9 @@ const AddressBar: React.FC<AddressBarProps> = ({
   onLogin,
   onLogout,
   onPublish,
-  canPublish
+  canPublish,
+  onOpenApiKeySettings,
+  hasApiKey
 }) => {
   const [inputVal, setInputVal] = useState(currentUrl);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -406,6 +410,13 @@ const AddressBar: React.FC<AddressBarProps> = ({
 
             {user ? (
               <>
+                <button
+                  onClick={onOpenApiKeySettings}
+                  className={`p-2 rounded-xl transition-all ${hasApiKey ? 'hover:bg-white/5 text-gray-500 hover:text-white' : 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 animate-pulse'}`}
+                  title={hasApiKey ? 'API Key Settings' : 'Set up your API Key'}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
+                </button>
                 <button
                   onClick={onLogout}
                   className="p-2 rounded-xl hover:bg-white/5 text-gray-500 hover:text-white transition-all flex items-center gap-2"

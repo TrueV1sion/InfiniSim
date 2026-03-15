@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import AddressBar from './components/AddressBar';
 import BrowserViewport from './components/BrowserViewport';
 import EmptyState from './components/EmptyState';
@@ -6,6 +6,7 @@ import HistoryPanel from './components/HistoryPanel';
 import DevToolsPanel from './components/DevToolsPanel';
 import DownloadsPanel from './components/DownloadsPanel';
 import ErrorBoundary from './components/ErrorBoundary';
+import ApiKeyModal from './components/ApiKeyModal';
 import { ModelTier, HistoryItem, Bookmark, DownloadItem } from './types';
 import { refinePageContent } from './services/geminiService';
 import { signInWithGoogle, logout } from './firebase';
@@ -17,6 +18,7 @@ import { useDownloads } from './hooks/useDownloads';
 import { parseGeminiError, categorizeError, type ErrorCategory } from './utils/errorParser';
 import { collection, addDoc } from 'firebase/firestore';
 import { db } from './firebase';
+import { getUserApiKey } from './supabase';
 
 const LOADING_MESSAGES = [
   'Synthesizing latent reality...',
@@ -42,6 +44,8 @@ const App: React.FC = () => {
   const [isDevToolsOpen, setIsDevToolsOpen] = useState(false);
   const [isDownloadsOpen, setIsDownloadsOpen] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [userHasApiKey, setUserHasApiKey] = useState(false);
 
   const { user, isAuthReady } = useFirebaseAuth(
     (data) => {
@@ -54,13 +58,27 @@ const App: React.FC = () => {
 
   useFirestoreSync(user, isAuthReady, { history, bookmarks, downloads, virtualState });
 
+  useEffect(() => {
+    if (!user) {
+      setUserHasApiKey(false);
+      return;
+    }
+    getUserApiKey(user.uid).then((key) => {
+      const hasKey = !!key;
+      setUserHasApiKey(hasKey);
+      if (!hasKey) {
+        setShowApiKeyModal(true);
+      }
+    });
+  }, [user]);
+
   const buildErrorHtml = useCallback((category: ErrorCategory, displayMessage: string, url: string, currentModel: ModelTier) => {
     const templates: Record<ErrorCategory, { title: string; msg: string; color: string; buttons: string }> = {
       api_key_missing: {
-        title: 'Service Unavailable',
-        msg: 'The AI service is temporarily unavailable. Please try again later.',
-        color: 'blue',
-        buttons: `<button onclick="window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: '${url}' }, '*')" class="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl transition-all font-semibold shadow-lg shadow-blue-600/20">Retry</button>`,
+        title: 'API Key Required',
+        msg: 'Sign in and configure your Google Gemini API key to start browsing the latent web.',
+        color: 'amber',
+        buttons: `<button onclick="window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: '${url}' }, '*')" class="w-full py-3 bg-amber-600 hover:bg-amber-500 rounded-xl transition-all font-semibold shadow-lg shadow-amber-600/20">Retry</button>`,
       },
       quota_exceeded: {
         title: 'Quota Exceeded',
@@ -221,6 +239,8 @@ const App: React.FC = () => {
         onLogout={logout}
         onPublish={handlePublish}
         canPublish={!!user && !!nav.pageData && nav.currentUrl !== 'infinite://directory'}
+        onOpenApiKeySettings={() => setShowApiKeyModal(true)}
+        hasApiKey={userHasApiKey}
       />
 
       <div className="flex-1 relative overflow-hidden flex flex-row">
@@ -319,6 +339,17 @@ const App: React.FC = () => {
         )}
       </div>
 
+      {user && (
+        <ApiKeyModal
+          isOpen={showApiKeyModal}
+          onClose={() => setShowApiKeyModal(false)}
+          onSuccess={() => {
+            setUserHasApiKey(true);
+            setShowApiKeyModal(false);
+          }}
+          userId={user.uid}
+        />
+      )}
     </div>
   );
 };
