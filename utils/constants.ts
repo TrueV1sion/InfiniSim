@@ -8,3 +8,4 @@ export const LOADING_MESSAGES = [
 ];
 
 export const MAX_BREADCRUMB_LENGTH = 5;
+export const MAX_PAGE_CACHE_SIZE = 20;

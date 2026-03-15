@@ -14,7 +14,7 @@ import { parseGeminiError, categorizeError, ErrorCategory } from '../utils/error
 import { pruneVirtualState } from '../utils/statePruner';
 import { getCachedPage, setCachedPage, generateCacheKey } from '../services/cacheService';
 import { resolveUrl, isSameSite, parseQueryParams } from '../utils/urlUtils';
-import { LOADING_MESSAGES, MAX_BREADCRUMB_LENGTH } from '../utils/constants';
+import { LOADING_MESSAGES, MAX_BREADCRUMB_LENGTH, MAX_PAGE_CACHE_SIZE } from '../utils/constants';
 
 interface BreadcrumbEntry {
   url: string;
@@ -100,6 +100,15 @@ function extractSiteIdentity(html: string, url: string): Record<string, string> 
   return identity;
 }
 
+function storeInPageCache(cache: Map<string, WebPage>, url: string, page: WebPage) {
+  cache.delete(url);
+  cache.set(url, page);
+  if (cache.size > MAX_PAGE_CACHE_SIZE) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+}
+
 export function useNavigation(deps: NavigationDeps): UseNavigationResult {
   const {
     history, setHistory, historyIndex, setHistoryIndex,
@@ -126,6 +135,7 @@ export function useNavigation(deps: NavigationDeps): UseNavigationResult {
   const hasResumed = useRef(false);
   const breadcrumbRef = useRef<BreadcrumbEntry[]>([]);
   const previousUrlRef = useRef<string>('');
+  const pageCache = useRef<Map<string, WebPage>>(new Map());
 
   const navigateTo = useCallback(async (url: string, isHistoryNav = false, incomingState?: any) => {
     const requestId = Date.now();
@@ -209,13 +219,15 @@ export function useNavigation(deps: NavigationDeps): UseNavigationResult {
         `;
 
         if (currentRequestRef.current === requestId) {
-          setPageData({
+          const dirPage: WebPage = {
             url,
             content: cleanHtml(directoryHtml),
             title: 'Infinite Directory',
             isLoading: false,
             generatedBy: model,
-          });
+          };
+          setPageData(dirPage);
+          storeInPageCache(pageCache.current, url, dirPage);
         }
         return;
       }
@@ -225,13 +237,15 @@ export function useNavigation(deps: NavigationDeps): UseNavigationResult {
         const cached = await getCachedPage(cacheKey);
         if (cached && currentRequestRef.current === requestId) {
           const cachedTitle = extractTitle(cached) || url;
-          setPageData({
+          const cachedPage: WebPage = {
             url,
             content: cached,
             title: cachedTitle,
             isLoading: false,
             generatedBy: model,
-          });
+          };
+          setPageData(cachedPage);
+          storeInPageCache(pageCache.current, url, cachedPage);
 
           const cachedIdentity = extractSiteIdentity(cached, url);
           if (Object.keys(cachedIdentity).length > 0) {
@@ -295,13 +309,15 @@ export function useNavigation(deps: NavigationDeps): UseNavigationResult {
         });
         setImageProgress(null);
 
-        setPageData({
+        const finishedPage: WebPage = {
           url,
           content: finalHtml,
           title: finalTitle,
           isLoading: false,
           generatedBy: model,
-        });
+        };
+        setPageData(finishedPage);
+        storeInPageCache(pageCache.current, url, finishedPage);
 
         const identity = extractSiteIdentity(finalHtml, url);
         if (Object.keys(identity).length > 0) {
@@ -371,19 +387,41 @@ export function useNavigation(deps: NavigationDeps): UseNavigationResult {
     };
   }, [loading]);
 
+  const restoreFromCache = useCallback((url: string) => {
+    const cached = pageCache.current.get(url);
+    if (cached) {
+      pageCache.current.delete(url);
+      pageCache.current.set(url, cached);
+      currentRequestRef.current = 0;
+      setLoading(false);
+      setLoadingProgress(0);
+      setCurrentUrl(url);
+      setPageData(cached);
+      previousUrlRef.current = url;
+      return true;
+    }
+    return false;
+  }, []);
+
   const handleBack = () => {
     if (historyIndex > 0) {
       const newIndex = historyIndex - 1;
+      const targetUrl = history[newIndex].url;
       setHistoryIndex(newIndex);
-      navigateTo(history[newIndex].url, true);
+      if (!restoreFromCache(targetUrl)) {
+        navigateTo(targetUrl, true);
+      }
     }
   };
 
   const handleForward = () => {
     if (historyIndex < history.length - 1) {
       const newIndex = historyIndex + 1;
+      const targetUrl = history[newIndex].url;
       setHistoryIndex(newIndex);
-      navigateTo(history[newIndex].url, true);
+      if (!restoreFromCache(targetUrl)) {
+        navigateTo(targetUrl, true);
+      }
     }
   };
 
@@ -406,6 +444,7 @@ export function useNavigation(deps: NavigationDeps): UseNavigationResult {
     setCurrentUrl('');
     setPageData(null);
     breadcrumbRef.current = [];
+    pageCache.current.clear();
   };
 
   const handleIframeNavigate = (targetUrl: string, state?: any) => {
