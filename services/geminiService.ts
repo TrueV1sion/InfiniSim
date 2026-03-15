@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { ModelTier } from "../types";
+import { getUserApiKey } from "../supabase";
 
 // The "Standard Library" injected into every generated page to handle navigation and bridge the AI to the browser chrome.
 const INJECTED_SCRIPT = `
@@ -213,9 +214,16 @@ export const generatePageContentStream = async function* (
   isDeepResearch: boolean = false,
   virtualState?: any,
   deviceType: 'desktop' | 'tablet' | 'mobile' | 'vr' | 'ar' = 'desktop',
-  soundEnabled: boolean = false
+  soundEnabled: boolean = false,
+  userId?: string
 ): AsyncGenerator<string, void, unknown> {
-  const apiKey = process.env.API_KEY;
+  let apiKey = process.env.API_KEY;
+
+  if (userId) {
+    const userKey = await getUserApiKey(userId);
+    if (userKey) apiKey = userKey;
+  }
+
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
@@ -269,8 +277,14 @@ export const generatePageContentStream = async function* (
   }
 };
 
-export const generateImage = async (prompt: string): Promise<string> => {
-  const apiKey = process.env.API_KEY;
+export const generateImage = async (prompt: string, userId?: string): Promise<string> => {
+  let apiKey = process.env.API_KEY;
+
+  if (userId) {
+    const userKey = await getUserApiKey(userId);
+    if (userKey) apiKey = userKey;
+  }
+
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
@@ -329,9 +343,16 @@ export const generatePageContent = async (
   isDeepResearch: boolean = false,
   virtualState?: any,
   deviceType: 'desktop' | 'tablet' | 'mobile' | 'vr' | 'ar' = 'desktop',
-  soundEnabled: boolean = false
+  soundEnabled: boolean = false,
+  userId?: string
 ): Promise<string> => {
-  const apiKey = process.env.API_KEY;
+  let apiKey = process.env.API_KEY;
+
+  if (userId) {
+    const userKey = await getUserApiKey(userId);
+    if (userKey) apiKey = userKey;
+  }
+
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
@@ -387,9 +408,16 @@ export const refinePageContent = async (
   instruction: string,
   model: ModelTier,
   deviceType: 'desktop' | 'tablet' | 'mobile' | 'vr' | 'ar' = 'desktop',
-  soundEnabled: boolean = false
+  soundEnabled: boolean = false,
+  userId?: string
 ): Promise<string> => {
-  const apiKey = process.env.API_KEY;
+  let apiKey = process.env.API_KEY;
+
+  if (userId) {
+    const userKey = await getUserApiKey(userId);
+    if (userKey) apiKey = userKey;
+  }
+
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });

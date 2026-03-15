@@ -5,11 +5,13 @@ import EmptyState from './components/EmptyState';
 import HistoryPanel from './components/HistoryPanel';
 import DevToolsPanel from './components/DevToolsPanel';
 import DownloadsPanel from './components/DownloadsPanel';
+import ApiKeyModal from './components/ApiKeyModal';
 import { ModelTier, WebPage, HistoryItem, Bookmark, DownloadItem } from './types';
 import { refinePageContent, generatePageContentStream, processAiImages, cleanHtml, PRELOADED_SCRIPTS } from './services/geminiService';
 import { auth, db, signInWithGoogle, logout } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, getDoc, collection, addDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { getUserApiKey } from './supabase';
 
 // Storage Helpers
 const STORAGE_PREFIX = 'infiniteWeb_';
@@ -92,6 +94,8 @@ const App: React.FC = () => {
   // Firebase Auth State
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [userHasApiKey, setUserHasApiKey] = useState(false);
 
   // Persistence Effects
   useEffect(() => {
@@ -109,7 +113,7 @@ const App: React.FC = () => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       setIsAuthReady(true);
-      
+
       if (currentUser) {
         try {
           const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
@@ -119,6 +123,12 @@ const App: React.FC = () => {
             if (data.bookmarks) setBookmarks(data.bookmarks);
             if (data.downloads) setDownloads(data.downloads);
             if (data.virtualState) setVirtualState(data.virtualState);
+          }
+
+          const apiKey = await getUserApiKey(currentUser.uid);
+          setUserHasApiKey(!!apiKey);
+          if (apiKey) {
+            setHasKey(true);
           }
         } catch (error) {
           console.error("Error fetching user data:", error);
@@ -256,7 +266,7 @@ const App: React.FC = () => {
       }
 
       // Generate content with deep research flag
-      const stream = await generatePageContentStream(url, model, deepResearch, stateToUse, deviceType, soundEnabled);
+      const stream = await generatePageContentStream(url, model, deepResearch, stateToUse, deviceType, soundEnabled, user?.uid);
       
       let accumulatedHtml = '';
       for await (const chunk of stream) {
@@ -322,8 +332,12 @@ const App: React.FC = () => {
           // ignore
         }
         
-        if (displayMessage.includes('Requested entity was not found')) {
-            setHasKey(false);
+        if (displayMessage.includes('Requested entity was not found') || displayMessage.includes('API Key not found')) {
+            if (user && !userHasApiKey) {
+              setShowApiKeyModal(true);
+            } else {
+              setHasKey(false);
+            }
         } else if (displayMessage.includes('429') || displayMessage.includes('quota') || displayMessage.includes('RESOURCE_EXHAUSTED')) {
             const errorHtml = `
               <!DOCTYPE html>
@@ -541,7 +555,7 @@ const App: React.FC = () => {
     if (!pageData) return;
     setIsRefining(true);
     try {
-      const newHtml = await refinePageContent(pageData.content, instruction, model, deviceType, soundEnabled);
+      const newHtml = await refinePageContent(pageData.content, instruction, model, deviceType, soundEnabled, user?.uid);
       setPageData({
         ...pageData,
         content: newHtml
@@ -577,9 +591,13 @@ const App: React.FC = () => {
       } catch (e) {
         // ignore
       }
-      
-      if (displayMessage.includes('Requested entity was not found')) {
-          setHasKey(false);
+
+      if (displayMessage.includes('Requested entity was not found') || displayMessage.includes('API Key not found')) {
+          if (user && !userHasApiKey) {
+            setShowApiKeyModal(true);
+          } else {
+            setHasKey(false);
+          }
       } else if (displayMessage.includes('429') || displayMessage.includes('quota') || displayMessage.includes('RESOURCE_EXHAUSTED')) {
           // Do not block the UI, just throw so DevToolsPanel can catch it
       } else if (displayMessage.includes('token count exceeds') || displayMessage.includes('400')) {
@@ -636,9 +654,27 @@ const App: React.FC = () => {
   };
 
   const handleSelectKey = async () => {
-    if (window.aistudio && window.aistudio.openSelectKey) {
+    if (user) {
+      setShowApiKeyModal(true);
+    } else if (window.aistudio && window.aistudio.openSelectKey) {
       await window.aistudio.openSelectKey();
       setHasKey(true);
+    }
+  };
+
+  const handleApiKeySuccess = async () => {
+    if (user) {
+      const apiKey = await getUserApiKey(user.uid);
+      setUserHasApiKey(!!apiKey);
+      if (apiKey) {
+        setHasKey(true);
+      }
+    }
+  };
+
+  const handleOpenApiKeySettings = () => {
+    if (user) {
+      setShowApiKeyModal(true);
     }
   };
 
@@ -735,6 +771,7 @@ const App: React.FC = () => {
         onLogout={logout}
         onPublish={handlePublish}
         canPublish={!!user && !!pageData && currentUrl !== 'infinite://directory'}
+        onOpenApiKeySettings={handleOpenApiKeySettings}
       />
 
       <div className="flex-1 relative overflow-hidden flex flex-row">
@@ -824,6 +861,16 @@ const App: React.FC = () => {
           />
         )}
       </div>
+
+      {user && (
+        <ApiKeyModal
+          isOpen={showApiKeyModal}
+          onClose={() => setShowApiKeyModal(false)}
+          onSuccess={handleApiKeySuccess}
+          userId={user.uid}
+        />
+      )}
+
       <style>{`
         @keyframes loading-progress {
           0% { transform: translateX(-100%); }
