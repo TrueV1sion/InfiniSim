@@ -64,6 +64,42 @@ function extractTitle(html: string): string | null {
   return match ? match[1].trim() : null;
 }
 
+function extractSiteIdentity(html: string, url: string): Record<string, string> {
+  const identity: Record<string, string> = {};
+
+  const titleMatch = html.match(/<title[^>]*>(.*?)<\/title>/i);
+  if (titleMatch) {
+    const raw = titleMatch[1].trim();
+    const cleaned = raw.split(/\s*[|\-–—]\s*/)[0].trim();
+    if (cleaned && cleaned.length < 60) {
+      identity.brandName = cleaned;
+    }
+  }
+
+  const navText = html.match(/<(?:nav|header)[^>]*>([\s\S]*?)<\/(?:nav|header)>/i);
+  if (navText) {
+    const logoText = navText[1].match(/<(?:a|span|div|h1|h2|p)[^>]*class="[^"]*(?:logo|brand|site-name)[^"]*"[^>]*>([\s\S]*?)<\/(?:a|span|div|h1|h2|p)>/i);
+    if (logoText) {
+      const txt = logoText[1].replace(/<[^>]+>/g, '').trim();
+      if (txt && txt.length < 40) {
+        identity.brandName = txt;
+      }
+    }
+  }
+
+  const bgColorMatch = html.match(/(?:bg-|background[-:])\s*(?:#[0-9a-fA-F]{3,8}|(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|violet|purple|fuchsia|pink|rose)-(?:50|100|200|300|400|500|600|700|800|900|950))/i);
+  if (bgColorMatch) {
+    identity.colorScheme = bgColorMatch[0];
+  }
+
+  try {
+    const parsed = new URL(url.startsWith('http') ? url : `https://${url}`);
+    identity.domain = parsed.hostname;
+  } catch {}
+
+  return identity;
+}
+
 export function useNavigation(deps: NavigationDeps): UseNavigationResult {
   const {
     history, setHistory, historyIndex, setHistoryIndex,
@@ -197,6 +233,14 @@ export function useNavigation(deps: NavigationDeps): UseNavigationResult {
             generatedBy: model,
           });
 
+          const cachedIdentity = extractSiteIdentity(cached, url);
+          if (Object.keys(cachedIdentity).length > 0) {
+            setVirtualState((prev: any) => ({
+              ...prev,
+              __site_identity: cachedIdentity,
+            }));
+          }
+
           breadcrumbRef.current = [
             ...breadcrumbRef.current,
             { url, title: cachedTitle },
@@ -258,6 +302,14 @@ export function useNavigation(deps: NavigationDeps): UseNavigationResult {
           isLoading: false,
           generatedBy: model,
         });
+
+        const identity = extractSiteIdentity(finalHtml, url);
+        if (Object.keys(identity).length > 0) {
+          setVirtualState((prev: any) => ({
+            ...prev,
+            __site_identity: identity,
+          }));
+        }
 
         breadcrumbRef.current = [
           ...breadcrumbRef.current,

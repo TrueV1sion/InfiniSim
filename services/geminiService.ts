@@ -386,8 +386,19 @@ function buildPrompt(
   }
 
   if (navContext?.siteIdentity && Object.keys(navContext.siteIdentity).length > 0) {
-    contextSection += `\n[SITE_IDENTITY: ${JSON.stringify(navContext.siteIdentity)}]`;
-    contextSection += `\nSITE CONTINUITY: This is an inner page of an existing site. Match the visual style, colors, fonts, and branding of the referring page. Reuse the same navigation bar structure and footer. Only regenerate the main content area.`;
+    const si = navContext.siteIdentity;
+    contextSection += `\n[SITE_IDENTITY: ${JSON.stringify(si)}]`;
+    contextSection += `\nSITE CONTINUITY (MANDATORY):`;
+    contextSection += `\n- This is a SUBPAGE of an existing site. You MUST maintain the EXACT same brand identity.`;
+    if (si.brandName) {
+      contextSection += `\n- The site brand name is "${si.brandName}". Use EXACTLY this name in the logo, navigation, title, and footer. Do NOT invent a different name.`;
+    }
+    if (si.domain) {
+      contextSection += `\n- The site domain is "${si.domain}". All internal links must stay on this domain.`;
+    }
+    contextSection += `\n- Reuse the same navigation bar structure, color palette, typography, and footer from the parent page.`;
+    contextSection += `\n- Only change the main content area to match the subpage URL.`;
+    contextSection += `\n- NEVER rename or rebrand the site. NEVER use generic names like "Nexus", "Nova", "Apex", "Pulse", or any other invented brand.`;
   }
 
   if (navContext?.breadcrumb && navContext.breadcrumb.length > 0) {
@@ -414,7 +425,8 @@ ${soundEnabled ? 'AUDIO ENABLED: Integrate Tone.js for procedural background mus
 ${stateString !== 'None' ? 'STATE: Render the page reflecting the provided browser state (logged-in status, cart items, preferences, etc.).' : ''}
 IMAGE INSTRUCTION: For images, use \`data-ai-prompt="<detailed description>"\` on \`<img>\` tags. The runtime generates these. Example: \`<img data-ai-prompt="A modern cityscape at sunset" src="" alt="Cityscape" />\`. Also use Pexels stock photos where appropriate.
 ${isDeepResearch ? 'DEEP RESEARCH MODE: Apply maximum architectural reasoning. Every JS component must be flawless. Optimize for maximum visual fidelity and interactivity.' : ''}
-If this is a known brand, simulate a high-fidelity alternative universe version. If it is a tool or game, make it fully production-ready.`;
+If this is a known brand, simulate a high-fidelity alternative universe version. If it is a tool or game, make it fully production-ready.
+${navContext?.siteIdentity?.brandName ? `REMINDER: The site name is "${navContext.siteIdentity.brandName}". Use this EXACT name everywhere — in the logo, nav, title tag, and footer. Do NOT change or replace it.` : ''}`;
 }
 
 export const generatePageContentStream = async function* (
