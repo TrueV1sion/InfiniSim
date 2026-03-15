@@ -89,8 +89,7 @@ const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, i
           ref={iframeRef}
           title={title}
           className="w-full h-full border-none block"
-          // Ensure all necessary permissions for interactive content and games are granted
-          sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals allow-pointer-lock allow-downloads"
+          sandbox="allow-scripts allow-forms allow-popups allow-modals allow-pointer-lock allow-downloads"
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; xr-spatial-tracking"
         />
       </div>

@@ -1,54 +1,73 @@
 import { GoogleGenAI } from "@google/genai";
 import { ModelTier } from "../types";
 import { getUserApiKey } from "../supabase";
+import { pruneVirtualState } from "../utils/statePruner";
 
 // The "Standard Library" injected into every generated page to handle navigation and bridge the AI to the browser chrome.
 const INJECTED_SCRIPT = `
 <script>
   (function() {
+    var _vls = {};
+    var _vss = {};
+
+    try {
+      var lsProxy = new Proxy({}, {
+        getPrototypeOf: function() { return Storage.prototype; },
+        get: function(t, k) {
+          if (k === 'getItem') return function(key) { return _vls[key] !== undefined ? _vls[key] : null; };
+          if (k === 'setItem') return function(key, val) { _vls[key] = String(val); syncState(); };
+          if (k === 'removeItem') return function(key) { delete _vls[key]; syncState(); };
+          if (k === 'clear') return function() { _vls = {}; syncState(); };
+          if (k === 'key') return function(i) { return Object.keys(_vls)[i] || null; };
+          if (k === 'length') return Object.keys(_vls).length;
+          return _vls[k] !== undefined ? _vls[k] : null;
+        },
+        set: function(t, k, v) { _vls[k] = String(v); syncState(); return true; }
+      });
+
+      var ssProxy = new Proxy({}, {
+        getPrototypeOf: function() { return Storage.prototype; },
+        get: function(t, k) {
+          if (k === 'getItem') return function(key) { return _vss[key] !== undefined ? _vss[key] : null; };
+          if (k === 'setItem') return function(key, val) { _vss[key] = String(val); syncState(); };
+          if (k === 'removeItem') return function(key) { delete _vss[key]; syncState(); };
+          if (k === 'clear') return function() { _vss = {}; syncState(); };
+          if (k === 'key') return function(i) { return Object.keys(_vss)[i] || null; };
+          if (k === 'length') return Object.keys(_vss).length;
+          return _vss[k] !== undefined ? _vss[k] : null;
+        },
+        set: function(t, k, v) { _vss[k] = String(v); syncState(); return true; }
+      });
+
+      Object.defineProperty(window, 'localStorage', { get: function() { return lsProxy; }, configurable: true });
+      Object.defineProperty(window, 'sessionStorage', { get: function() { return ssProxy; }, configurable: true });
+    } catch(e) {}
+
+    window.addEventListener('message', function(e) {
+      if (e.data && e.data.type === 'INFINITE_WEB_RESTORE_STATE') {
+        var s = e.data.state || {};
+        if (s.localStorage) { for (var k in s.localStorage) _vls[k] = s.localStorage[k]; }
+        if (s.sessionStorage) { for (var k in s.sessionStorage) _vss[k] = s.sessionStorage[k]; }
+      }
+    });
+
     function getBrowserState() {
-      try {
-        return {
-          localStorage: Object.assign({}, window.localStorage),
-          sessionStorage: Object.assign({}, window.sessionStorage),
-          cookie: document.cookie
-        };
-      } catch(e) { return {}; }
+      return { localStorage: Object.assign({}, _vls), sessionStorage: Object.assign({}, _vss) };
     }
 
     function syncState() {
       window.parent.postMessage({ type: 'INFINITE_WEB_STATE_UPDATE', state: getBrowserState() }, '*');
     }
 
-    const originalSetItem = Storage.prototype.setItem;
-    Storage.prototype.setItem = function(key, value) {
-      originalSetItem.apply(this, arguments);
-      syncState();
-    };
-    const originalRemoveItem = Storage.prototype.removeItem;
-    Storage.prototype.removeItem = function(key) {
-      originalRemoveItem.apply(this, arguments);
-      syncState();
-    };
-    const originalClear = Storage.prototype.clear;
-    Storage.prototype.clear = function() {
-      originalClear.apply(this, arguments);
-      syncState();
-    };
-
     document.addEventListener('change', syncState);
 
-    // Override native dialogs with SweetAlert2 if available
     if (window.Swal) {
       window.alert = function(message) {
         Swal.fire({ text: message, confirmButtonColor: '#3b82f6' });
       };
       window.confirm = function(message) {
-        // Note: Native confirm is synchronous, Swal is async. 
-        // We can't perfectly polyfill synchronous confirm, but we can try to warn or just return true for AI scripts that don't await.
-        // For best results, AI should use Swal directly, but this catches basic usages.
         console.warn('window.confirm is deprecated in InfiniteWeb. Use Swal.fire() instead.');
-        return true; 
+        return true;
       };
       window.prompt = function(message, defaultText) {
         console.warn('window.prompt is deprecated in InfiniteWeb. Use Swal.fire() instead.');
@@ -56,13 +75,11 @@ const INJECTED_SCRIPT = `
       };
     }
 
-    // Provide a global navigation function for the AI to use
     window.navigateTo = function(url) {
       window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: url, state: getBrowserState() }, '*');
     };
 
-    // Intercept History API for SPA routing
-    const originalPushState = history.pushState;
+    var originalPushState = history.pushState;
     history.pushState = function(state, unused, url) {
       if (url) {
         window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: url.toString(), state: getBrowserState() }, '*');
@@ -70,7 +87,7 @@ const INJECTED_SCRIPT = `
       return originalPushState.apply(this, arguments);
     };
 
-    const originalReplaceState = history.replaceState;
+    var originalReplaceState = history.replaceState;
     history.replaceState = function(state, unused, url) {
       if (url) {
         window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: url.toString(), state: getBrowserState() }, '*');
@@ -78,12 +95,11 @@ const INJECTED_SCRIPT = `
       return originalReplaceState.apply(this, arguments);
     };
 
-    // Intercept navigation
     document.addEventListener('click', function(e) {
       if (e.defaultPrevented) return;
-      const link = e.target.closest('a');
+      var link = e.target.closest('a');
       if (link) {
-        const href = link.getAttribute('href');
+        var href = link.getAttribute('href');
         if (href && href !== '#' && !href.startsWith('javascript:')) {
           e.preventDefault();
           window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: href, state: getBrowserState() }, '*');
@@ -91,33 +107,33 @@ const INJECTED_SCRIPT = `
       }
     });
 
-    // Form submission interceptor
     document.addEventListener('submit', function(e) {
       if (e.defaultPrevented) return;
       e.preventDefault();
-      const form = e.target;
-      const action = form.getAttribute('action') || window.location.pathname;
+      var form = e.target;
+      var action = form.getAttribute('action') || window.location.pathname;
       if (action.startsWith('javascript:')) return;
-      const formData = new FormData(form);
-      const params = new URLSearchParams();
-      for (const [key, value] of formData.entries()) {
-        params.append(key, value.toString());
+      var formData = new FormData(form);
+      var params = new URLSearchParams();
+      for (var pair of formData.entries()) {
+        params.append(pair[0], pair[1].toString());
       }
-      const queryStr = params.toString();
-      const target = action + (action.includes('?') ? '&' : '?') + queryStr;
+      var queryStr = params.toString();
+      var target = action + (action.includes('?') ? '&' : '?') + queryStr;
       window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: target, state: getBrowserState() }, '*');
     });
 
-    // Console bridge for DevTools
-    const originalLog = console.log;
-    const originalError = console.error;
-    console.log = (...args) => {
-      originalLog(...args);
-      window.parent.postMessage({ type: 'DEVTOOLS_CONSOLE_LOG', level: 'log', payload: args.map(a => String(a)) }, '*');
+    var originalLog = console.log;
+    var originalError = console.error;
+    console.log = function() {
+      originalLog.apply(console, arguments);
+      var args = Array.prototype.slice.call(arguments);
+      window.parent.postMessage({ type: 'DEVTOOLS_CONSOLE_LOG', level: 'log', payload: args.map(function(a) { return String(a); }) }, '*');
     };
-    console.error = (...args) => {
-      originalError(...args);
-      window.parent.postMessage({ type: 'DEVTOOLS_CONSOLE_LOG', level: 'error', payload: args.map(a => String(a)) }, '*');
+    console.error = function() {
+      originalError.apply(console, arguments);
+      var args = Array.prototype.slice.call(arguments);
+      window.parent.postMessage({ type: 'DEVTOOLS_CONSOLE_LOG', level: 'error', payload: args.map(function(a) { return String(a); }) }, '*');
     };
   })();
 </script>
@@ -228,12 +244,10 @@ export const generatePageContentStream = async function* (
 
   const ai = new GoogleGenAI({ apiKey });
   
-  let stateString = virtualState && Object.keys(virtualState).length > 0 
-    ? JSON.stringify(virtualState) 
+  const pruned = virtualState ? pruneVirtualState(virtualState) : null;
+  const stateString = pruned && Object.keys(pruned).length > 0
+    ? JSON.stringify(pruned)
     : 'None';
-  if (stateString.length > 50000) {
-    stateString = stateString.substring(0, 50000) + '... [TRUNCATED DUE TO SIZE]';
-  }
 
   const prompt = `
     [REQUEST_TYPE: SERVER_GET_STREAM]
@@ -307,32 +321,48 @@ export const generateImage = async (prompt: string, userId?: string): Promise<st
   }
 };
 
-export const processAiImages = async (html: string): Promise<string> => {
+export const processAiImages = async (
+  html: string,
+  onProgress?: (completed: number, total: number) => void
+): Promise<string> => {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
   const images = Array.from(doc.querySelectorAll('img[data-ai-prompt]'));
 
   if (images.length === 0) return html;
 
-  const imagePromises = images.map(async (img) => {
-    const prompt = img.getAttribute('data-ai-prompt');
-    if (!prompt) return;
-    
-    // Set a loading state or placeholder
-    img.setAttribute('src', 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiMzMzMiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZmlsbD0iI2ZmZiIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+R2VuZXJhdGluZyBJbWFnZS4uLjwvdGV4dD48L3N2Zz4=');
-    
-    try {
-      const base64Image = await generateImage(prompt);
-      if (base64Image) {
-        img.setAttribute('src', base64Image);
-        img.removeAttribute('data-ai-prompt');
-      }
-    } catch (e) {
-      console.error("Failed to generate image for prompt:", prompt, e);
-    }
-  });
+  const total = images.length;
+  let completed = 0;
+  onProgress?.(0, total);
 
-  await Promise.all(imagePromises);
+  const BATCH_SIZE = 3;
+  for (let i = 0; i < images.length; i += BATCH_SIZE) {
+    const batch = images.slice(i, i + BATCH_SIZE);
+    await Promise.all(batch.map(async (img) => {
+      const prompt = img.getAttribute('data-ai-prompt');
+      if (!prompt) {
+        completed++;
+        onProgress?.(completed, total);
+        return;
+      }
+
+      img.setAttribute('src', 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiMzMzMiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZmlsbD0iI2ZmZiIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+R2VuZXJhdGluZyBJbWFnZS4uLjwvdGV4dD48L3N2Zz4=');
+
+      try {
+        const base64Image = await generateImage(prompt);
+        if (base64Image) {
+          img.setAttribute('src', base64Image);
+          img.removeAttribute('data-ai-prompt');
+        }
+      } catch (e) {
+        console.error('Failed to generate image for prompt:', prompt, e);
+      }
+
+      completed++;
+      onProgress?.(completed, total);
+    }));
+  }
+
   const doctype = html.match(/^<!DOCTYPE[^>]*>/i)?.[0] || '<!DOCTYPE html>';
   return `${doctype}\n${doc.documentElement.outerHTML}`;
 };
@@ -357,12 +387,10 @@ export const generatePageContent = async (
 
   const ai = new GoogleGenAI({ apiKey });
   
-  let stateString = virtualState && Object.keys(virtualState).length > 0 
-    ? JSON.stringify(virtualState) 
+  const pruned = virtualState ? pruneVirtualState(virtualState) : null;
+  const stateString = pruned && Object.keys(pruned).length > 0
+    ? JSON.stringify(pruned)
     : 'None';
-  if (stateString.length > 50000) {
-    stateString = stateString.substring(0, 50000) + '... [TRUNCATED DUE TO SIZE]';
-  }
 
   // Enhance the prompt with "environmental" cues to help the AI contextualize its "server" role
   const prompt = `

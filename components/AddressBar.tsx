@@ -79,7 +79,7 @@ const AddressBar: React.FC<AddressBarProps> = ({
 }) => {
   const [inputVal, setInputVal] = useState(currentUrl);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [suggestions, setSuggestions] = useState<{url: string, title?: string, type: 'history'|'bookmark'}[]>([]);
+  const [suggestions, setSuggestions] = useState<Array<{url: string; title?: string; type: 'history' | 'bookmark'}>>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -99,10 +99,10 @@ const AddressBar: React.FC<AddressBarProps> = ({
 
     const matchedHistory = history
       .filter(h => h.url.toLowerCase().includes(query))
-      .map(h => ({ url: h.url, type: 'history' as const }));
+      .map(h => ({ url: h.url, title: undefined, type: 'history' as const }));
 
     // Deduplicate by URL, preferring bookmarks
-    const uniqueSuggestions = [...matchedBookmarks];
+    const uniqueSuggestions: Array<{url: string; title?: string; type: 'history' | 'bookmark'}> = [...matchedBookmarks];
     for (const h of matchedHistory) {
       if (!uniqueSuggestions.some(s => s.url === h.url)) {
         uniqueSuggestions.push(h);

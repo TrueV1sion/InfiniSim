@@ -526,10 +526,10 @@ const DevToolsPanel: React.FC<DevToolsPanelProps> = ({
                 `}>
                     <iframe 
                     ref={iframeRef}
-                    srcdoc={previewContent} 
+                    srcDoc={previewContent}
                     className="w-full h-full border-none" 
                     title="Live Preview"
-                    sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals"
+                    sandbox="allow-scripts allow-forms allow-popups allow-modals"
                     />
                 </div>
              </div>
