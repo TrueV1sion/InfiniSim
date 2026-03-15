@@ -8,6 +8,7 @@ import DevToolsPanel from './components/DevToolsPanel';
 import DownloadsPanel from './components/DownloadsPanel';
 import ErrorBoundary from './components/ErrorBoundary';
 import ApiKeyModal from './components/ApiKeyModal';
+import BrandPromptModal from './components/BrandPromptModal';
 import ToastContainer from './components/Toast';
 import { ModelTier, HistoryItem, Bookmark, DownloadItem } from './types';
 import { refinePageContent } from './services/geminiService';
@@ -24,6 +25,7 @@ import { LOADING_MESSAGES } from './utils/constants';
 import { collection, addDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { getLocalApiKey, syncApiKeyToSupabase, loadApiKeyFromSupabase } from './services/apiKeyService';
+import { resolveStyle } from './utils/styleResolver';
 
 const App: React.FC = () => {
   const [history, setHistory] = usePersistedState<HistoryItem[]>('history', []);
@@ -42,6 +44,9 @@ const App: React.FC = () => {
   const [isRefining, setIsRefining] = useState(false);
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [userHasApiKey, setUserHasApiKey] = useState(false);
+  const [showBrandPrompt, setShowBrandPrompt] = useState(false);
+  const [pendingBrandUrl, setPendingBrandUrl] = useState('');
+  const [pendingBrandDomain, setPendingBrandDomain] = useState('');
 
   const { user, isAuthReady } = useFirebaseAuth(
     (data) => {
@@ -225,6 +230,39 @@ const App: React.FC = () => {
     nav.setPageData(null);
   };
 
+  const handleNavigateWithBrandCheck = useCallback((url: string) => {
+    const styleResult = resolveStyle(url);
+    if (styleResult.type === 'brand' && styleResult.brand) {
+      try {
+        const stored = JSON.parse(localStorage.getItem('infiniteWeb_brandPrefs') || '{}');
+        const existingPref = stored[styleResult.brand.domain];
+        if (existingPref) {
+          nav.navigateTo(url, false, undefined, existingPref);
+          return;
+        }
+      } catch {}
+      setPendingBrandUrl(url);
+      setPendingBrandDomain(styleResult.brand.domain);
+      setShowBrandPrompt(true);
+      return;
+    }
+    nav.navigateTo(url);
+  }, [nav]);
+
+  const handleBrandPromptSubmit = useCallback((preference: string) => {
+    setShowBrandPrompt(false);
+    nav.navigateTo(pendingBrandUrl, false, undefined, preference || undefined);
+    setPendingBrandUrl('');
+    setPendingBrandDomain('');
+  }, [nav, pendingBrandUrl]);
+
+  const handleBrandPromptSkip = useCallback(() => {
+    setShowBrandPrompt(false);
+    nav.navigateTo(pendingBrandUrl);
+    setPendingBrandUrl('');
+    setPendingBrandDomain('');
+  }, [nav, pendingBrandUrl]);
+
   return (
     <div className="flex flex-col h-screen w-screen bg-[#050505]">
       <AddressBar
@@ -232,7 +270,7 @@ const App: React.FC = () => {
         isLoading={nav.loading}
         model={model}
         deviceType={deviceType}
-        onNavigate={(url) => nav.navigateTo(url)}
+        onNavigate={handleNavigateWithBrandCheck}
         onBack={nav.handleBack}
         onForward={nav.handleForward}
         onReload={nav.handleReload}
@@ -343,7 +381,7 @@ const App: React.FC = () => {
               />
             ) : !nav.loading && (
               <Homepage
-                onNavigate={(url) => nav.navigateTo(url)}
+                onNavigate={handleNavigateWithBrandCheck}
                 hasApiKey={userHasApiKey}
                 onSetupApiKey={() => setShowApiKeyModal(true)}
                 history={history}
@@ -383,6 +421,13 @@ const App: React.FC = () => {
           setShowApiKeyModal(false);
         }}
         userId={user?.uid}
+      />
+
+      <BrandPromptModal
+        isOpen={showBrandPrompt}
+        brandDomain={pendingBrandDomain}
+        onSubmit={handleBrandPromptSubmit}
+        onSkip={handleBrandPromptSkip}
       />
 
       <ToastContainer toasts={toasts} onRemove={removeToast} />

@@ -34,7 +34,7 @@ interface UseNavigationResult {
   pageData: WebPage | null;
   imageProgress: ImageProgress | null;
   setPageData: Dispatch<SetStateAction<WebPage | null>>;
-  navigateTo: (url: string, isHistoryNav?: boolean, incomingState?: any) => Promise<void>;
+  navigateTo: (url: string, isHistoryNav?: boolean, incomingState?: any, userStylePreference?: string) => Promise<void>;
   handleBack: () => void;
   handleForward: () => void;
   handleStop: () => void;
@@ -87,11 +87,6 @@ function extractSiteIdentity(html: string, url: string): Record<string, string> 
     }
   }
 
-  const bgColorMatch = html.match(/(?:bg-|background[-:])\s*(?:#[0-9a-fA-F]{3,8}|(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|violet|purple|fuchsia|pink|rose)-(?:50|100|200|300|400|500|600|700|800|900|950))/i);
-  if (bgColorMatch) {
-    identity.colorScheme = bgColorMatch[0];
-  }
-
   try {
     const parsed = new URL(url.startsWith('http') ? url : `https://${url}`);
     identity.domain = parsed.hostname;
@@ -137,7 +132,7 @@ export function useNavigation(deps: NavigationDeps): UseNavigationResult {
   const previousUrlRef = useRef<string>('');
   const pageCache = useRef<Map<string, WebPage>>(new Map());
 
-  const navigateTo = useCallback(async (url: string, isHistoryNav = false, incomingState?: any) => {
+  const navigateTo = useCallback(async (url: string, isHistoryNav = false, incomingState?: any, userStylePreference?: string) => {
     const requestId = Date.now();
     currentRequestRef.current = requestId;
 
@@ -181,6 +176,10 @@ export function useNavigation(deps: NavigationDeps): UseNavigationResult {
     const qp = parseQueryParams(url);
     if (Object.keys(qp).length > 0) {
       navContext.queryParams = qp;
+    }
+
+    if (userStylePreference) {
+      navContext.userStylePreference = userStylePreference;
     }
 
     try {

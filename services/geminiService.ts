@@ -2,6 +2,7 @@ import { GoogleGenAI } from "@google/genai";
 import { ModelTier } from "../types";
 import { resolveApiKey } from "./apiKeyService";
 import { pruneVirtualState } from "../utils/statePruner";
+import { resolveStyle, getStylePromptSection } from "../utils/styleResolver";
 
 const INJECTED_SCRIPT = `
 <script>
@@ -249,13 +250,15 @@ The following libraries are AUTOMATICALLY INJECTED by the runtime. You MUST NOT 
 - **Canvas Confetti** (\`confetti()\`)
 - **SweetAlert2** (\`Swal.fire()\` — native \`alert\`/\`confirm\`/\`prompt\` are overridden to use Swal)
 
+You may use Tailwind utilities, DaisyUI components, AND/OR custom CSS in a \`<style>\` block — whichever best serves the design mood. You are NOT limited to Tailwind.
+
 You MUST include \`<script>\`/\`<link>\` tags ONLY for these specialized libraries if needed:
 - Maps: Leaflet.js (\`<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" /><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\\/script>\`)
 - 3D/WebGL: Three.js (\`<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\\/script>\`) or PlayCanvas (\`<script src="https://code.playcanvas.com/playcanvas-latest.js"><\\/script>\`)
 - 2D Physics: Matter.js (\`<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"><\\/script>\`)
 
 ### CORE ARCHITECTURAL PRINCIPLES:
-1. **Uncompromising Visual Quality**: Every page must look like an award-winning, professionally designed website. Use sophisticated typography via Google Fonts (Inter, JetBrains Mono, Playfair Display, etc.). Implement a cohesive color palette with proper contrast. Use generous whitespace, grid layouts, and visual hierarchy.
+1. **Adaptive Visual Identity**: Every page MUST have a unique visual personality. The prompt will include a VISUAL IDENTITY DIRECTIVE with specific colors, typography, layout style, and mood. You MUST follow these specifications precisely — do NOT default to a generic dark tech aesthetic, do NOT reuse the same design across different sites. Load appropriate Google Fonts via \`<link>\` in the \`<head>\` to match the typography directive. Use custom CSS \`<style>\` blocks when the mood calls for effects beyond Tailwind (glows, textures, patterns, gradients, etc.).
 2. **Total Interactivity**: EVERY button, link, and UI element MUST be fully functional.
    - Navigation: use \`<a>\` tags with descriptive \`href\` attributes (e.g., \`/profile\`, \`/checkout\`).
    - JS navigation: call \`window.navigateTo('/url')\`. NEVER use \`window.location.href\`.
@@ -364,11 +367,11 @@ export interface NavigationContext {
   referrerUrl?: string;
   siteIdentity?: {
     brandName?: string;
-    colorScheme?: string;
-    layoutStyle?: string;
+    domain?: string;
   };
   breadcrumb?: Array<{ url: string; title: string }>;
   queryParams?: Record<string, string>;
+  userStylePreference?: string;
 }
 
 function buildPrompt(
@@ -389,17 +392,20 @@ function buildPrompt(
     const si = navContext.siteIdentity;
     contextSection += `\n[SITE_IDENTITY: ${JSON.stringify(si)}]`;
     contextSection += `\nSITE CONTINUITY (MANDATORY):`;
-    contextSection += `\n- This is a SUBPAGE of an existing site. You MUST maintain the EXACT same brand identity.`;
+    contextSection += `\n- This is a SUBPAGE of an existing site. You MUST maintain the same brand identity and overall design language.`;
     if (si.brandName) {
       contextSection += `\n- The site brand name is "${si.brandName}". Use EXACTLY this name in the logo, navigation, title, and footer. Do NOT invent a different name.`;
     }
     if (si.domain) {
       contextSection += `\n- The site domain is "${si.domain}". All internal links must stay on this domain.`;
     }
-    contextSection += `\n- Reuse the same navigation bar structure, color palette, typography, and footer from the parent page.`;
-    contextSection += `\n- Only change the main content area to match the subpage URL.`;
+    contextSection += `\n- Maintain the same navigation bar structure and footer from the parent page.`;
+    contextSection += `\n- Adapt the main content area layout to suit this subpage's content.`;
     contextSection += `\n- NEVER rename or rebrand the site. NEVER use generic names like "Nexus", "Nova", "Apex", "Pulse", or any other invented brand.`;
   }
+
+  const styleResult = resolveStyle(url);
+  const styleSection = getStylePromptSection(styleResult, navContext?.userStylePreference);
 
   if (navContext?.breadcrumb && navContext.breadcrumb.length > 0) {
     contextSection += `\n[NAVIGATION_BREADCRUMB: ${JSON.stringify(navContext.breadcrumb)}]`;
@@ -415,9 +421,10 @@ function buildPrompt(
 [DEVICE_TYPE: "${deviceType}"]
 [SOUND_ENABLED: ${soundEnabled ? 'TRUE' : 'FALSE'}]
 [CURRENT_BROWSER_STATE: ${stateString}]${contextSection}
-
+${styleSection}
 Generate the complete, fully interactive page for the target URL.
 CRITICAL: Every button, link, card, tab, menu item, and interactive element MUST be wired to navigate via <a href> or window.navigateTo(). Zero dead buttons. Zero non-functional links.
+CRITICAL: Follow the VISUAL IDENTITY DIRECTIVE above precisely. The page design MUST match the specified mood, colors, and typography — not a generic template.
 ${deviceType !== 'desktop' ? `DEVICE: Optimize layout, typography, and interactions for ${deviceType}. Use Tailwind responsive prefixes appropriately, but ensure base classes look perfect for ${deviceType}.` : ''}
 ${deviceType === 'vr' ? 'VR MODE: Use A-Frame (<script src="https://aframe.io/releases/1.4.2/aframe.min.js"><\\/script>) or Three.js for an immersive 3D environment with interactive objects, skybox, and camera controls.' : ''}
 ${deviceType === 'ar' ? 'AR MODE: Use A-Frame with AR.js or WebXR. Transparent background — no skybox. Render 3D objects floating in space.' : ''}
@@ -425,7 +432,6 @@ ${soundEnabled ? 'AUDIO ENABLED: Integrate Tone.js for procedural background mus
 ${stateString !== 'None' ? 'STATE: Render the page reflecting the provided browser state (logged-in status, cart items, preferences, etc.).' : ''}
 IMAGE INSTRUCTION: For images, use \`data-ai-prompt="<detailed description>"\` on \`<img>\` tags. The runtime generates these. Example: \`<img data-ai-prompt="A modern cityscape at sunset" src="" alt="Cityscape" />\`. Also use Pexels stock photos where appropriate.
 ${isDeepResearch ? 'DEEP RESEARCH MODE: Apply maximum architectural reasoning. Every JS component must be flawless. Optimize for maximum visual fidelity and interactivity.' : ''}
-If this is a known brand, simulate a high-fidelity alternative universe version. If it is a tool or game, make it fully production-ready.
 ${navContext?.siteIdentity?.brandName ? `REMINDER: The site name is "${navContext.siteIdentity.brandName}". Use this EXACT name everywhere — in the logo, nav, title tag, and footer. Do NOT change or replace it.` : ''}`;
 }
 
