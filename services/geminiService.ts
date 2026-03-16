@@ -258,7 +258,7 @@ You MUST include \`<script>\`/\`<link>\` tags ONLY for these specialized librari
 - 2D Physics: Matter.js (\`<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"><\\/script>\`)
 
 ### CORE ARCHITECTURAL PRINCIPLES:
-1. **Adaptive Visual Identity**: Every page MUST have a unique visual personality. The prompt will include a VISUAL IDENTITY DIRECTIVE with specific colors, typography, layout style, and mood. You MUST follow these specifications precisely — do NOT default to a generic dark tech aesthetic, do NOT reuse the same design across different sites. Load appropriate Google Fonts via \`<link>\` in the \`<head>\` to match the typography directive. Use custom CSS \`<style>\` blocks when the mood calls for effects beyond Tailwind (glows, textures, patterns, gradients, etc.).
+1. **Uncompromising Visual Quality**: Every page MUST look like an award-winning, professionally designed website. Use sophisticated typography via Google Fonts (\`<link>\` in \`<head>\`). Implement a cohesive color palette with proper contrast ratios. Use generous whitespace, grid layouts, and clear visual hierarchy. Every page should feel premium: polished gradients, layered shadows, beautiful spacing, refined type scales. You may use Tailwind utilities, DaisyUI components, AND/OR custom CSS in a \`<style>\` block — whichever produces the most stunning result. If the prompt includes a STYLE HINT, treat it as creative inspiration — NOT a rigid constraint. Your primary goal is always maximum visual quality and polish. Do NOT default to the same generic dark tech aesthetic for every site — vary your designs creatively based on the URL context.
 2. **Total Interactivity**: EVERY button, link, and UI element MUST be fully functional.
    - Navigation: use \`<a>\` tags with descriptive \`href\` attributes (e.g., \`/profile\`, \`/checkout\`).
    - JS navigation: call \`window.navigateTo('/url')\`. NEVER use \`window.location.href\`.
@@ -424,7 +424,7 @@ function buildPrompt(
 ${styleSection}
 Generate the complete, fully interactive page for the target URL.
 CRITICAL: Every button, link, card, tab, menu item, and interactive element MUST be wired to navigate via <a href> or window.navigateTo(). Zero dead buttons. Zero non-functional links.
-CRITICAL: Follow the VISUAL IDENTITY DIRECTIVE above precisely. The page design MUST match the specified mood, colors, and typography — not a generic template.
+CRITICAL: The page must look like an award-winning, professionally designed website. Prioritize visual polish and quality above all else.
 ${deviceType !== 'desktop' ? `DEVICE: Optimize layout, typography, and interactions for ${deviceType}. Use Tailwind responsive prefixes appropriately, but ensure base classes look perfect for ${deviceType}.` : ''}
 ${deviceType === 'vr' ? 'VR MODE: Use A-Frame (<script src="https://aframe.io/releases/1.4.2/aframe.min.js"><\\/script>) or Three.js for an immersive 3D environment with interactive objects, skybox, and camera controls.' : ''}
 ${deviceType === 'ar' ? 'AR MODE: Use A-Frame with AR.js or WebXR. Transparent background — no skybox. Render 3D objects floating in space.' : ''}
