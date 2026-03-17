@@ -1,6 +1,6 @@
 export enum ModelTier {
   FLASH = 'gemini-3-flash-preview',
-  PRO = 'gemini-3.1-pro-preview',
+  PRO = 'gemini-3-pro-preview',
 }
 
 declare global {
@@ -11,6 +11,8 @@ declare global {
     };
   }
 }
+
+export type BrowserEra = '1990' | '1995' | '1999' | '2001' | '2005' | '2010' | '2015' | '2020' | '2025' | '2030' | '2035' | 'default';
 
 export interface HistoryItem {
   url: string;
