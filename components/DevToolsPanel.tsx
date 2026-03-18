@@ -7,8 +7,10 @@ interface DevToolsPanelProps {
   model: ModelTier;
   onApplyCode: (newCode: string) => void;
   onAiRefine: (instruction: string) => Promise<void>;
+  onClearCache: () => void;
   isGenerating: boolean;
   onClose: () => void;
+  webContainerOutput?: string;
 }
 
 interface ConsoleLog {
@@ -24,10 +26,12 @@ const DevToolsPanel: React.FC<DevToolsPanelProps> = ({
   model,
   onApplyCode,
   onAiRefine,
+  onClearCache,
   isGenerating,
-  onClose
+  onClose,
+  webContainerOutput
 }) => {
-  const [activeTab, setActiveTab] = useState<'code' | 'ai'>('ai');
+  const [activeTab, setActiveTab] = useState<'code' | 'ai' | 'terminal'>('ai');
   const [localCode, setLocalCode] = useState(code);
   const [debouncedCode, setDebouncedCode] = useState(code);
   const [showLivePreview, setShowLivePreview] = useState(false);
@@ -68,8 +72,22 @@ const DevToolsPanel: React.FC<DevToolsPanelProps> = ({
   useEffect(() => {
     // Save draft if modified from original prop
     if (localCode !== code) {
-      localStorage.setItem('infiniteWeb_draft', localCode);
-      setHasDraft(true);
+      try {
+        localStorage.setItem('infiniteWeb_draft', localCode);
+        setHasDraft(true);
+      } catch (e: any) {
+        const isQuotaExceeded = e instanceof DOMException && (
+          e.name === 'QuotaExceededError' ||
+          e.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+          e.code === 22 ||
+          e.code === 1014
+        );
+        if (isQuotaExceeded) {
+          console.warn('Draft too large for localStorage, skipping save.');
+        } else {
+          console.error('Local storage error saving draft:', e);
+        }
+      }
     }
   }, [localCode, code]);
 
@@ -375,7 +393,28 @@ const DevToolsPanel: React.FC<DevToolsPanelProps> = ({
             </span>
           )}
         </button>
-        <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors p-1.5 hover:bg-white/10 rounded-md ml-2">
+        <button
+          onClick={() => setActiveTab('terminal')}
+          className={`flex-1 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+            activeTab === 'terminal' ? 'text-green-400 border-b-2 border-green-400 bg-white/5' : 'text-gray-500 hover:text-gray-300'
+          }`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+          Terminal
+        </button>
+        <button 
+          onClick={() => {
+            if (window.confirm('Are you sure you want to clear the AI context cache? This will reset the virtual state for this session.')) {
+              onClearCache();
+              setChatHistory(prev => [...prev, { role: 'assistant', content: 'Context cache cleared. Starting fresh.', timestamp: Date.now() }]);
+            }
+          }} 
+          className="text-gray-500 hover:text-red-400 transition-colors p-1.5 hover:bg-white/10 rounded-md ml-2"
+          title="Clear AI Context Cache"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+        </button>
+        <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors p-1.5 hover:bg-white/10 rounded-md ml-1">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
       </div>
@@ -639,6 +678,13 @@ const DevToolsPanel: React.FC<DevToolsPanelProps> = ({
                 </button>
              </div>
            </div>
+        </div>
+
+        {/* Terminal Tab */}
+        <div className={`absolute inset-0 flex flex-col ${activeTab === 'terminal' ? 'z-10 bg-[#0a0a0a]' : 'z-0 invisible'}`}>
+          <div className="flex-1 overflow-y-auto p-4 font-mono text-xs text-green-400 whitespace-pre-wrap bg-[#050505]">
+            {webContainerOutput || 'Terminal output will appear here...'}
+          </div>
         </div>
 
       </div>

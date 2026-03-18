@@ -1,8 +1,7 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { ModelTier } from "../types";
-import { resolveStyle, getStylePromptSection } from "../utils/styleResolver";
-import { resolveCreativeDirection, getCreativeDirectionPrompt } from "../config/creativeDirections";
 
+// The "Standard Library" injected into every generated page to handle navigation and bridge the AI to the browser chrome.
 const INJECTED_SCRIPT = `
 <script>
   (function() {
@@ -38,13 +37,17 @@ const INJECTED_SCRIPT = `
 
     document.addEventListener('change', syncState);
 
+    // Override native dialogs with SweetAlert2 if available
     if (window.Swal) {
       window.alert = function(message) {
         Swal.fire({ text: message, confirmButtonColor: '#3b82f6' });
       };
       window.confirm = function(message) {
+        // Note: Native confirm is synchronous, Swal is async. 
+        // We can't perfectly polyfill synchronous confirm, but we can try to warn or just return true for AI scripts that don't await.
+        // For best results, AI should use Swal directly, but this catches basic usages.
         console.warn('window.confirm is deprecated in InfiniteWeb. Use Swal.fire() instead.');
-        return true;
+        return true; 
       };
       window.prompt = function(message, defaultText) {
         console.warn('window.prompt is deprecated in InfiniteWeb. Use Swal.fire() instead.');
@@ -52,14 +55,16 @@ const INJECTED_SCRIPT = `
       };
     }
 
+    // Provide a global navigation function for the AI to use
     window.navigateTo = function(url) {
       window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: url, state: getBrowserState() }, '*');
     };
 
+    // Intercept History API for SPA routing
     const originalPushState = history.pushState;
     history.pushState = function(state, unused, url) {
       if (url) {
-        window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: url.toString(), state: getBrowserState() }, '*');
+        window.parent.postMessage({ type: 'INFINITE_WEB_URL_UPDATE', url: url.toString(), state: getBrowserState() }, '*');
       }
       return originalPushState.apply(this, arguments);
     };
@@ -67,23 +72,25 @@ const INJECTED_SCRIPT = `
     const originalReplaceState = history.replaceState;
     history.replaceState = function(state, unused, url) {
       if (url) {
-        window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: url.toString(), state: getBrowserState() }, '*');
+        window.parent.postMessage({ type: 'INFINITE_WEB_URL_UPDATE', url: url.toString(), state: getBrowserState() }, '*');
       }
       return originalReplaceState.apply(this, arguments);
     };
 
+    // Intercept navigation
     document.addEventListener('click', function(e) {
       if (e.defaultPrevented) return;
       const link = e.target.closest('a');
       if (link) {
         const href = link.getAttribute('href');
-        if (href && href !== '#' && !href.startsWith('javascript:')) {
+        if (href && !href.startsWith('#') && !href.startsWith('javascript:')) {
           e.preventDefault();
           window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: href, state: getBrowserState() }, '*');
         }
       }
     });
 
+    // Form submission interceptor
     document.addEventListener('submit', function(e) {
       if (e.defaultPrevented) return;
       e.preventDefault();
@@ -100,6 +107,7 @@ const INJECTED_SCRIPT = `
       window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: target, state: getBrowserState() }, '*');
     });
 
+    // Console bridge for DevTools
     const originalLog = console.log;
     const originalError = console.error;
     console.log = (...args) => {
@@ -111,13 +119,15 @@ const INJECTED_SCRIPT = `
       window.parent.postMessage({ type: 'DEVTOOLS_CONSOLE_LOG', level: 'error', payload: args.map(a => String(a)) }, '*');
     };
 
+    // API Simulation Bridge
     const originalFetch = window.fetch;
     window.fetch = async function(resource, init) {
       const url = typeof resource === 'string' ? resource : resource.url;
+      // Intercept API calls to simulate a backend
       if (url.startsWith('/api/') || url.includes('api.')) {
         return new Promise((resolve, reject) => {
           const requestId = Math.random().toString(36).substring(7);
-
+          
           const handler = (event) => {
             if (event.data.type === 'INFINITE_WEB_API_RESPONSE' && event.data.requestId === requestId) {
               window.removeEventListener('message', handler);
@@ -128,7 +138,7 @@ const INJECTED_SCRIPT = `
             }
           };
           window.addEventListener('message', handler);
-
+          
           window.parent.postMessage({
             type: 'INFINITE_WEB_API_CALL',
             requestId,
@@ -141,107 +151,180 @@ const INJECTED_SCRIPT = `
       }
       return originalFetch.apply(this, arguments);
     };
+
+    // InfiniteAPI Bridge
+    window.infiniteWeb = {
+      _callbacks: {},
+      _id: 0,
+      _send: function(url, body) {
+        return new Promise((resolve, reject) => {
+          const id = "iw_" + (++this._id) + "_" + Math.random().toString(36).substring(7);
+          this._callbacks[id] = { resolve, reject };
+          
+          const handler = (event) => {
+            if (event.data.type === 'INFINITE_WEB_API_RESPONSE' && event.data.requestId === id) {
+              window.removeEventListener('message', handler);
+              const cb = this._callbacks[id];
+              if (cb) {
+                if (event.data.status >= 400 || (event.data.body && event.data.body.error)) {
+                  cb.reject(new Error(event.data.body?.error || "API Error"));
+                } else {
+                  cb.resolve(event.data.body);
+                }
+                delete this._callbacks[id];
+              }
+            }
+          };
+          window.addEventListener('message', handler);
+
+          window.parent.postMessage({
+            type: 'INFINITE_WEB_API_CALL',
+            requestId: id,
+            url: url,
+            method: 'POST',
+            body: body,
+            state: getBrowserState()
+          }, '*');
+        });
+      },
+      fetchExternalData: function(url, options = {}) {
+        return this._send('infinite://api/proxy', { url, options });
+      },
+      showNotification: function(title, message) {
+        return this._send('infinite://api/notify', { title, message });
+      },
+      storeData: function(key, value) {
+        return this._send('infinite://api/store/set', { key, value });
+      },
+      getData: function(key) {
+        return this._send('infinite://api/store/get', { key }).then(res => res.value);
+      }
+    };
+
+    // Listen for scroll commands from Copilot
+    window.addEventListener('message', function(event) {
+      if (event.data.type === 'INFINITE_WEB_SCROLL') {
+        const direction = event.data.direction;
+        const amount = window.innerHeight * 0.8;
+        window.scrollBy({
+          top: direction === 'up' ? -amount : amount,
+          behavior: 'smooth'
+        });
+      }
+    });
+
+    // Intercept WebXR session requests
+    if (navigator.xr) {
+      const originalRequestSession = navigator.xr.requestSession.bind(navigator.xr);
+      navigator.xr.requestSession = async function(mode, options) {
+        window.parent.postMessage({
+          type: 'INFINITE_WEB_XR_SESSION',
+          sessionType: mode
+        }, '*');
+        
+        try {
+          const session = await originalRequestSession(mode, options);
+          
+          // Intercept requestAnimationFrame to send tracking data
+          const originalRequestAnimationFrame = session.requestAnimationFrame.bind(session);
+          session.requestAnimationFrame = function(callback) {
+            return originalRequestAnimationFrame((time, frame) => {
+              // We could extract pose data here and send it, but for now just notify
+              // window.parent.postMessage({ type: 'INFINITE_WEB_XR_TRACKING', time }, '*');
+              callback(time, frame);
+            });
+          };
+          
+          return session;
+        } catch (e) {
+          console.error("XR Session failed:", e);
+          throw e;
+        }
+      };
+    }
   })();
 </script>
 `;
 
-const SYSTEM_INSTRUCTION = `You are InfiniteWeb 4.0, the world's most advanced generative web engine. You simulate a fully interactive, hyper-realistic internet where every page looks like it was designed by a top creative agency and built by a senior engineering team.
+const SYSTEM_INSTRUCTION = `
+You are InfiniteWeb 4.0, the world's most advanced generative web engine. You don't just "generate pages"; you simulate a fully interactive, hyper-realistic internet.
 
-### ABSOLUTE OUTPUT RULES (READ FIRST):
-- Return ONLY raw HTML5 starting with \`<!DOCTYPE html>\`.
-- NO markdown wrappers (\`\`\`html). NO explanations. NO commentary. JUST the HTML document.
-- ALWAYS include proper \`<html>\`, \`<head>\`, and \`<body>\` tags.
-- Place ALL \`<script>\` tags at the END of \`<body>\`, right before \`</body>\`.
+### CORE ARCHITECTURAL PRINCIPLES:
+1. **Uncompromising Quality**: Every page must look like a high-end, award-winning website. Use Tailwind CSS for all styling.
+2. **Total Interactivity**: EVERY button, link, and feature MUST be fully functional. This is a true full simulation.
+   - For page navigation, use \`<a>\` tags with descriptive \`href\` attributes (e.g., \`/profile\`, \`/checkout\`).
+   - If you must navigate via JavaScript, call \`window.navigateTo('/your-url')\`. DO NOT use \`window.location.href\`.
+   - For interactive features (like "Like", "Save", "Add to Cart", "Submit"), write the actual JavaScript to update the DOM, show toast notifications, and persist state to \`localStorage\`.
+   - NEVER generate "dead" buttons. If a button is on the screen, it must perform its intended action or navigate to a relevant page.
+3. **Dynamic Content**: Hallucinate realistic real-time updates using JS intervals. Timestamps should update, stock tickers should fluctuate, news feeds should rotate, and social media feeds should simulate incoming posts or notifications.
+4. **Variety of Website Types**: Be prepared to generate highly authentic e-commerce platforms (with working carts), social media networks (with interactive feeds), news portals (with breaking news banners), SaaS dashboards, and immersive 3D experiences.
+5. **Realistic Network Latency**: Simulate realistic network latency *within* the generated page. Use skeleton loaders, spinners, or progress bars initially, then use \`setTimeout\` (e.g., 800ms - 2000ms) to "fetch" and reveal the actual content, making it feel like a real web application loading data from a server.
+6. **Responsive Design**: The user can toggle between Desktop, Tablet, and Mobile views. You MUST ensure your Tailwind classes are fully responsive (e.g., use \`md:\`, \`lg:\` prefixes) so the layout adapts perfectly to any device width.
+7. **Library Ecosystem**: 
+   The following libraries are PRE-INSTALLED in the environment. DO NOT output their <script> tags. Just use them directly:
+   - Tailwind CSS (Global classes)
+   - DaisyUI (Tailwind components: \`btn\`, \`card\`, \`modal\`, etc. are ready to use!)
+   - Alpine.js (UI/State: \`x-data\`, \`x-show\`, etc.)
+   - Lucide Icons (Call \`lucide.createIcons()\` to render)
+   - GSAP (Animations: \`gsap.to()\`)
+   - Chart.js (Data visualization: \`new Chart()\`)
+   - Faker.js (Mock data: \`window.faker\`)
+   - SortableJS (Drag & Drop: \`new Sortable()\`)
+   - Howler.js (Audio/SFX: \`new Howl()\`)
+   - Tone.js (Procedural Music/Synths: \`new Tone.Synth()\`)
+   - Marked.js (Markdown: \`marked.parse()\`)
+   - Canvas Confetti (Delight: \`confetti()\`)
+   - SweetAlert2 (Dialogs: \`Swal.fire()\`. Note: native \`alert\`/\`confirm\` are overridden to use Swal)
+   
+   For the following specialized libraries, you MUST include their <script> tags if you need them:
+   - Maps: Leaflet.js (<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" /><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>)
+   - 3D/WebGL: Three.js (<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>) or PlayCanvas (<script src="https://code.playcanvas.com/playcanvas-latest.js"></script>)
+   - 2D Physics: Matter.js (<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>)
 
-### LIBRARY ECOSYSTEM (CRITICAL):
-The following libraries are AUTOMATICALLY INJECTED by the runtime. You MUST NOT include their \`<script>\` or \`<link>\` tags — they are already loaded:
-- **Tailwind CSS** + **DaisyUI** (classes like \`btn\`, \`card\`, \`modal\`, \`badge\`, \`drawer\`, etc.)
-- **Alpine.js** (\`x-data\`, \`x-show\`, \`x-bind\`, \`@click\`, etc.)
-- **Lucide Icons** (call \`lucide.createIcons()\` after DOM ready)
-- **GSAP** (\`gsap.to()\`, \`gsap.from()\`, \`gsap.timeline()\`)
-- **Chart.js** (\`new Chart(ctx, config)\`)
-- **Faker.js** (\`window.faker.person.fullName()\`, \`faker.lorem.paragraph()\`, etc.)
-- **SortableJS** (\`new Sortable(el, options)\`)
-- **Howler.js** (\`new Howl({src: [...]})\`)
-- **Tone.js** (\`new Tone.Synth()\`)
-- **Marked.js** (\`marked.parse(md)\`)
-- **Canvas Confetti** (\`confetti()\`)
-- **SweetAlert2** (\`Swal.fire()\` — native \`alert\`/\`confirm\`/\`prompt\` are overridden to use Swal)
+### INFINITE API (HOST CAPABILITIES):
+You have access to a special \`window.infiniteWeb\` object that allows you to interact with the host environment.
+Use these methods to build powerful, connected applications:
 
-You may use Tailwind utilities, DaisyUI components, AND/OR custom CSS in a \`<style>\` block — whichever produces the most stunning result.
+1. **Proxy External Requests (Bypass CORS)**
+   \`\`\`javascript
+   // Use this instead of fetch() for external APIs to bypass CORS
+   const data = await window.infiniteWeb.fetchExternalData('https://api.example.com/data', {
+     method: 'GET',
+     headers: { 'Authorization': 'Bearer token' }
+   });
+   \`\`\`
 
-You MUST include \`<script>\`/\`<link>\` tags ONLY for these specialized libraries if needed:
-- Maps: Leaflet.js (\`<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" /><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\\/script>\`)
-- 3D/WebGL: Three.js (\`<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\\/script>\`) or PlayCanvas (\`<script src="https://code.playcanvas.com/playcanvas-latest.js"><\\/script>\`)
-- 2D Physics: Matter.js (\`<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"><\\/script>\`)
+2. **Persistent Storage (Cross-Session)**
+   \`\`\`javascript
+   // Store data globally (persists across app reloads)
+   await window.infiniteWeb.storeData('myApp_settings', { theme: 'dark' });
+   
+   // Retrieve data
+   const settings = await window.infiniteWeb.getData('myApp_settings');
+   \`\`\`
 
-### DESIGN EXCELLENCE (NON-NEGOTIABLE):
-
-**1. Visual Quality Checklist — EVERY page must include ALL of these:**
-- A Google Fonts \`<link>\` in \`<head>\` with at least 2 fonts (one for headings, one for body)
-- A cohesive color palette with at most 5-6 colors applied consistently
-- A clear typographic hierarchy: at least 3 distinct heading sizes with proper contrast to body text
-- Consistent spacing based on an 8px scale (p-2, p-4, p-6, p-8, p-12, p-16)
-- At least one visually striking section (hero with gradient, bold image, color block, or dramatic typography)
-- Proper contrast ratios for all text (light text on dark backgrounds, dark text on light backgrounds)
-
-**2. Layout Diversity — NEVER repeat the same layout pattern:**
-- Each major section must use a DIFFERENT layout: full-width hero, then two-column, then card grid, then testimonial strip, then centered CTA, etc.
-- Vary visual density: some sections should breathe (sparse whitespace), others should be rich and dense
-- Use asymmetric layouts, offset elements, and varied column widths to create visual interest
-- Break the grid occasionally: a pull quote, a full-bleed image, an offset card
-
-**3. Content Originality — NO generic filler:**
-- NEVER use "Welcome to Our Website", "We provide the best service", "Lorem ipsum" or any generic corporate text
-- Generate content that is SPECIFIC to the URL context: a coffee shop should describe single-origin beans and brewing methods; a space agency should detail mission parameters
-- Headlines must be creative and contextual, not generic
-- Use Faker.js (\`window.faker\`) for realistic names, emails, dates, company names — but write the actual descriptive content yourself
-
-**4. Anti-Patterns — NEVER do any of these:**
-- NEVER use default DaisyUI theme colors without customization via Tailwind config or custom CSS
-- NEVER generate a page that is just rows of identical cards with no visual variety
-- NEVER use more than 3 font families on a single page
-- NEVER use the same dark-blue-tech aesthetic for every site — match the design to the content
-- NEVER create a page shorter than 3 screen-heights of content (except for tools/games)
-- NEVER leave images without proper sizing classes (always include w- and h- or aspect-ratio)
-
-### TOTAL INTERACTIVITY (ZERO DEAD ELEMENTS):
-1. **Links**: Every \`<a>\` tag MUST have a meaningful \`href\` (e.g., \`/products/quantum-headphones\`). NEVER use \`href="#"\` for navigation.
-2. **Buttons**: Any button leading to another view MUST call \`window.navigateTo('/descriptive-path')\`. NEVER use \`window.location.href\`.
-3. **Contextual paths**: A product "Quantum Headphones" links to \`/products/quantum-headphones\`, NOT generic \`/product\`.
-4. **Cards**: The entire card surface must be clickable via wrapper \`<a>\` tag or \`onclick="window.navigateTo(...)"\`. Each card links to a unique detail page.
-5. **Navigation menus**: ALL sidebar items, footer links, breadcrumbs, tabs, dropdowns use \`<a href>\` or \`window.navigateTo()\` with descriptive URLs.
-6. **Forms**: Search forms navigate to \`/search?q={query}\`. Login forms show "logged in" state. Contact forms show confirmation.
-7. **Interactive features**: Like, Save, Add to Cart — write actual JS to update DOM, show toasts via Swal, persist to localStorage.
-8. **Social elements**: Usernames link to \`/user/{handle}\`. Reply buttons open inline forms or navigate.
-
-### DYNAMIC & ALIVE:
-- Use JS intervals/timeouts for real-time feel: updating timestamps, rotating feeds, incrementing counters, fluctuating tickers
-- Simulate network latency: show skeleton loaders initially, then use \`setTimeout\` (800-2000ms) to reveal content progressively
-- GSAP entrance animations on scroll-visible sections: fade-in-up, slide-in, scale-in
-- Hover micro-interactions on every interactive element: scale, shadow, color shift, underline animation
-
-### RESPONSIVE DESIGN:
-- Use Tailwind responsive prefixes (\`sm:\`, \`md:\`, \`lg:\`, \`xl:\`) for ALL layout decisions
-- Mobile-first: base classes for mobile, then scale up
-- Navigation should collapse to a hamburger menu on mobile
-
-### IMAGE GENERATION:
-For images, use \`data-ai-prompt\` on \`<img>\` tags. The runtime generates these in real-time.
-- Example: \`<img data-ai-prompt="Professional headshot of a smiling woman in business attire, warm studio lighting, neutral background" src="" alt="Profile photo" class="w-full h-48 object-cover rounded-lg" />\`
-- ALWAYS write detailed prompts (minimum 15 words): include subject, composition, lighting, mood, and style
-- ALWAYS include alt text, sizing classes (w-, h- or aspect-ratio), and object-cover/contain
-- For generic imagery, use Pexels stock photos: \`src="https://images.pexels.com/photos/{id}/pexels-photo-{id}.jpeg?auto=compress&cs=tinysrgb&w=600"\`
+3. **System Notifications**
+   \`\`\`javascript
+   // Show a native browser notification
+   await window.infiniteWeb.showNotification('Task Complete', 'Your export is ready.');
+   \`\`\`
 
 ### GAME ENGINE (PLAYCANVAS) SPECIFICS:
-When generating games or 3D worlds:
-- Full-screen canvas with id "application-canvas"
-- Responsive: \`app.setCanvasFillMode(pc.FILLMODE_FILL_WINDOW); app.setCanvasResolution(pc.RESOLUTION_AUTO);\`
-- Complex environments with primitives styled via shaders/lighting
-- Polished game-feel: camera damping, particles, responsive WASD/Mouse controls
+When a URL or prompt implies a game or 3D world:
+- Initialize a full-screen canvas with id "application-canvas".
+- Implement responsive resizing: app.setCanvasFillMode(pc.FILLMODE_FILL_WINDOW); app.setCanvasResolution(pc.RESOLUTION_AUTO);
+- Create complex environments using primitive archetypes (cubes, spheres, planes) but styled with advanced shaders and light mapping.
+- Implement polished "game-feel": smooth camera damping, particle effects for actions, and responsive WASD/Mouse controls.
 
-### FOOTER:
-Include a subtle footer: "Copyright 202X — Simulated by InfiniteWeb"
+### BEHAVIORAL DIRECTIVES:
+- Act as a high-level full-stack engineer and a world-class creative director.
+- Use sophisticated typography (Inter, JetBrains Mono, or Playfair Display via Google Fonts).
+- Implement "Micro-interactions": hover scales, subtle box-shadow transitions, and smooth entrance animations using GSAP.
+- Always include a "Debug Footer" or small AI-generated "Copyright 202X - Simulated by InfiniteWeb" note.
+
+### OUTPUT FORMAT:
+- Return ONLY the raw HTML5 code starting with <!DOCTYPE html>.
+- NO markdown wrappers. NO explanations. NO code blocks. JUST CODE.
 `;
 
 export const PRELOADED_SCRIPTS = `
@@ -263,7 +346,7 @@ export const PRELOADED_SCRIPTS = `
 
 export const cleanHtml = (html: string) => {
     html = html.replace(/^\s*```html\n?/i, '').replace(/\n?```\s*$/, '').trim();
-
+    
     if (!html.includes('cdn.tailwindcss.com')) {
         html = PRELOADED_SCRIPTS + '\n' + html;
     }
@@ -275,74 +358,6 @@ export const cleanHtml = (html: string) => {
     }
     return html;
 };
-
-function truncateState(virtualState: any): string {
-  if (!virtualState || Object.keys(virtualState).length === 0) return 'None';
-  let stateString = JSON.stringify(virtualState);
-  if (stateString.length > 50000) {
-    stateString = stateString.substring(0, 50000) + '... [TRUNCATED]';
-  }
-  return stateString;
-}
-
-function buildPrompt(
-  url: string,
-  stateString: string,
-  deviceType: string,
-  soundEnabled: boolean,
-  isDeepResearch: boolean,
-  browserEra: string
-): string {
-  const styleResult = resolveStyle(url);
-  const styleSection = getStylePromptSection(styleResult);
-
-  const creativeDirection = resolveCreativeDirection(url);
-  const creativeSection = creativeDirection ? getCreativeDirectionPrompt(creativeDirection) : '';
-
-  let prompt = `[TARGET_URL: "${url}"]
-[DEVICE_TYPE: "${deviceType}"]
-[SOUND_ENABLED: ${soundEnabled ? 'TRUE' : 'FALSE'}]
-[CURRENT_BROWSER_STATE: ${stateString}]
-[BROWSER_ERA: "${browserEra}"]
-${styleSection}
-${creativeSection}
-
-Generate the complete, fully interactive page for the target URL.
-
-CRITICAL REQUIREMENTS:
-- Every button, link, card, tab, menu item, and interactive element MUST navigate or perform an action. Zero dead buttons.
-- The page MUST look like an award-winning, professionally designed website with the specified design mood.
-- Include at least 2 Google Fonts via <link> in <head> that match the style directive typography.
-- Use at least 3 different section layouts (never repeat the same card grid).
-- Generate rich, contextual content specific to this URL (no generic placeholder text).
-- Include GSAP entrance animations and hover micro-interactions.`;
-
-  if (deviceType !== 'desktop') {
-    prompt += `\nDEVICE: Optimize layout, typography, and interactions for ${deviceType}. Use Tailwind responsive prefixes. Ensure base classes are perfect for ${deviceType}.`;
-  }
-  if (deviceType === 'vr') {
-    prompt += '\nVR MODE: Use A-Frame (<script src="https://aframe.io/releases/1.4.2/aframe.min.js"><\\/script>) or Three.js for an immersive 3D environment with interactive objects, skybox, and camera controls.';
-  }
-  if (deviceType === 'ar') {
-    prompt += '\nAR MODE: Use A-Frame with AR.js or WebXR. Transparent background. Render 3D objects floating in space.';
-  }
-  if (soundEnabled) {
-    prompt += '\nAUDIO ENABLED: Use Tone.js for procedural background music and Howler.js for UI sound effects. Start audio context on first user interaction.';
-  }
-  if (browserEra !== 'default') {
-    prompt += `\nBROWSER ERA: "${browserEra}". Style the page to look exactly like a website from that era. For 1995: tables, gray bg, blue links, Times New Roman. For 2001: early CSS, bevels. For 2010: gradients, rounded corners. For 2035: neural interfaces, holographic elements. You may override the style directive to match the era if they conflict.`;
-  }
-  if (stateString !== 'None') {
-    prompt += '\nSTATE: Render the page reflecting the provided browser state (logged-in status, cart items, preferences, etc.).';
-  }
-  if (isDeepResearch) {
-    prompt += '\nDEEP RESEARCH MODE: Apply maximum architectural reasoning. Every JS component must be flawless. Optimize for maximum visual fidelity and interactivity.';
-  }
-
-  prompt += `\nIMAGE INSTRUCTION: For images, use \`data-ai-prompt="<detailed description of at least 15 words>"\` on \`<img>\` tags. Include subject, composition, lighting, mood, color palette. Also use Pexels stock photos where appropriate.`;
-
-  return prompt;
-}
 
 export const generatePageContentStream = async function* (
   url: string,
@@ -357,51 +372,183 @@ export const generatePageContentStream = async function* (
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
+  
+  let stateString = virtualState && Object.keys(virtualState).length > 0 
+    ? JSON.stringify(virtualState) 
+    : 'None';
+  if (stateString.length > 50000) {
+    stateString = stateString.substring(0, 50000) + '... [TRUNCATED DUE TO SIZE]';
+  }
 
-  const stateString = truncateState(virtualState);
-  const prompt = buildPrompt(url, stateString, deviceType, soundEnabled, isDeepResearch, browserEra);
+  const baseContext = `
+    [TARGET_URL: "${url}"]
+    [DEVICE_TYPE: "${deviceType}"]
+    [SOUND_ENABLED: ${soundEnabled ? 'TRUE' : 'FALSE'}]
+    [CURRENT_BROWSER_STATE: ${stateString}]
+    [BROWSER_ERA: "${browserEra}"]
+  `;
 
-  const isFlash = model === ModelTier.FLASH;
+  if (isDeepResearch) {
+    // ============================================================================
+    // MULTI-AGENT WORKFLOW (Phase 1: Designer -> Phase 2: Engineer)
+    // ============================================================================
+    
+    // --- PHASE 1: DESIGNER AGENT ---
+    const designerSystemInstruction = `
+You are the Visionary Designer Agent for InfiniteWeb 4.0.
+Your ONLY job is to create breathtaking, hyper-realistic, award-winning HTML/Tailwind mockups.
+Focus 100% of your attention on aesthetics, layout, typography, GSAP animations, and responsive design.
+DO NOT write complex data fetching, state management, or InfiniteAPI logic.
+Use mock data to make the design look complete and beautiful.
+CRITICAL: You MUST add clear \`id\` attributes to all buttons, forms, and dynamic content areas so the Engineering Agent can wire them up later.
+Output ONLY raw HTML starting with <!DOCTYPE html>. No markdown formatting.
+    `;
 
-  try {
-    const responseStream = await ai.models.generateContentStream({
-      model: model,
-      contents: prompt,
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: isDeepResearch ? 0.8 : 0.7,
-        thinkingConfig: {
-          thinkingBudget: isFlash
-            ? (isDeepResearch ? 8192 : 4096)
-            : (isDeepResearch ? 12000 : 6000)
-        },
+    const designerPrompt = `
+      ${baseContext}
+      TASK: Generate the UI shell for the target URL. Make it visually stunning.
+      Remember: Focus only on UI/UX. The Engineer will add the logic later.
+    `;
+
+    let fullHtml = "";
+    try {
+      const designerStream = await ai.models.generateContentStream({
+        model: model,
+        contents: designerPrompt,
+        config: {
+          systemInstruction: designerSystemInstruction,
+          temperature: 0.8,
+          ...(model === ModelTier.PRO ? { thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH } } : {})
+        }
+      });
+
+      for await (const chunk of designerStream) {
+        if (chunk.text) {
+          fullHtml += chunk.text;
+          yield chunk.text;
+        }
       }
-    });
-
-    for await (const chunk of responseStream) {
-      if (chunk.text) {
-        yield chunk.text;
-      }
+    } catch (error) {
+      console.error("Designer Agent Error:", error);
+      throw error;
     }
-  } catch (error) {
-    console.error("Gemini Stream Error:", error);
-    throw error;
+
+    // --- TRANSITION ---
+    yield `\n<!-- WIRING LOGIC... -->\n<div id="infinite-agent-toast" style="position:fixed;bottom:24px;right:24px;background:rgba(15,23,42,0.9);color:#38bdf8;padding:12px 24px;border-radius:12px;z-index:99999;font-family:monospace;font-size:14px;box-shadow:0 10px 25px rgba(0,0,0,0.5);border:1px solid rgba(56,189,248,0.3);backdrop-filter:blur(8px);display:flex;align-items:center;gap:12px;"><svg class="animate-spin h-5 w-5 text-sky-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Systems Engineer: Wiring up logic...</div>\n`;
+
+    // --- PHASE 2: ENGINEER AGENT ---
+    const engineerSystemInstruction = `
+You are the Systems Engineer Agent for InfiniteWeb 4.0.
+The Designer Agent has created a beautiful HTML UI. Your job is to make it functional.
+You have access to the InfiniteWeb API:
+- window.infiniteWeb.fetchExternalData(url, options) // Bypasses CORS
+- window.infiniteWeb.storeData(key, value)
+- window.infiniteWeb.getData(key)
+- window.infiniteWeb.showNotification(title, message)
+
+Write a SINGLE <script> block that:
+1. Selects elements from the Designer's HTML using document.getElementById or querySelector.
+2. Adds event listeners for interactivity.
+3. Fetches real data using window.infiniteWeb.fetchExternalData if applicable (e.g., for news, weather, crypto).
+4. Updates the DOM with the real data or handles state changes.
+Output ONLY the <script>...</script> block. Do not output any other HTML. No markdown formatting.
+    `;
+
+    const engineerPrompt = `
+      ${baseContext}
+      DESIGNER HTML:
+      \`\`\`html
+      ${fullHtml}
+      \`\`\`
+      
+      TASK: Write the <script> block to make the above HTML functional. Use the InfiniteAPI to fetch real data if this URL implies it (e.g., hacker news, weather, crypto).
+    `;
+
+    try {
+      const engineerStream = await ai.models.generateContentStream({
+        model: model,
+        contents: engineerPrompt,
+        config: {
+          systemInstruction: engineerSystemInstruction,
+          temperature: 0.4,
+          ...(model === ModelTier.PRO ? { thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH } } : {})
+        }
+      });
+
+      for await (const chunk of engineerStream) {
+        if (chunk.text) {
+          yield chunk.text;
+        }
+      }
+    } catch (error) {
+      console.error("Engineer Agent Error:", error);
+      // Don't throw here, at least the user gets the UI
+      yield `\n<script>console.error("Engineer Agent failed to wire logic.");</script>\n`;
+    }
+
+    // Remove the toast
+    yield `\n<script>setTimeout(() => document.getElementById('infinite-agent-toast')?.remove(), 1000);</script>\n`;
+
+  } else {
+    // ============================================================================
+    // STANDARD WORKFLOW (Single Agent)
+    // ============================================================================
+    const prompt = `
+      [REQUEST_TYPE: SERVER_GET_STREAM]
+      ${baseContext}
+      
+      TASK: Execute the generation of the page at the target URL. 
+      CRITICAL DEVICE INSTRUCTION: The user is viewing this on a ${deviceType} screen. You MUST optimize the layout, typography, and interactive elements specifically for ${deviceType}. Use Tailwind's responsive prefixes (sm:, md:, lg:) appropriately, but ensure the default/base classes look perfect for ${deviceType}.
+      ${deviceType === 'vr' ? "CRITICAL VR INSTRUCTION: This is a Virtual Reality experience. You MUST use A-Frame (<script src=\"https://aframe.io/releases/1.4.2/aframe.min.js\"></script>) or Three.js to render a fully immersive 3D environment. Include interactive 3D objects, a skybox, and camera controls." : ""}
+      ${deviceType === 'ar' ? "CRITICAL AR INSTRUCTION: This is an Augmented Reality experience. You MUST use A-Frame with AR.js or WebXR to render an AR scene. The background of the iframe is transparent, so do NOT render a skybox or solid background color. Render 3D objects floating in space." : ""}
+      ${soundEnabled ? "CRITICAL AUDIO INSTRUCTION: Sound is ENABLED. You MUST integrate rich audio features. Use Tone.js for procedural background music or synthesizers, and Howler.js for UI sound effects. Create an immersive soundscape that reacts to user interactions. Make sure audio context is started on first user interaction." : ""}
+      CRITICAL ERA INSTRUCTION: The user has selected the browser era "${browserEra}". You MUST style the page to look exactly like a website from that era. For example, if 1995, use tables for layout, default gray backgrounds, blue links, and Times New Roman. If 2001, use early CSS, bevels, and smaller fonts. If 2010, use gradients, rounded corners, and early responsive design. If 2035, use neural interfaces, holographic elements, and highly advanced spatial computing concepts. Do NOT use modern Tailwind classes if they conflict with the era's aesthetic, but you may use Tailwind to achieve the era's look.
+      CRITICAL STATE INSTRUCTION: If CURRENT_BROWSER_STATE is provided and contains data (e.g., localStorage, sessionStorage, cookies), you MUST render the page to reflect this state.
+      CRITICAL IMAGE INSTRUCTION: To include images, you MUST use the attribute \`data-ai-prompt="<detailed image description>"\` on \`<img>\` tags instead of a real src. The system will generate these images in real-time. Example: \`<img data-ai-prompt="A futuristic cyberpunk neon sign" src="" alt="Neon sign" />\`
+      If this is a known brand site, simulate its high-fidelity alternative universe version.
+      If it is a tool or game, make it fully production-ready.
+    `;
+
+    try {
+      const responseStream = await ai.models.generateContentStream({
+        model: model,
+        contents: prompt,
+        config: {
+          systemInstruction: SYSTEM_INSTRUCTION,
+          temperature: 0.7,
+          ...(model === ModelTier.PRO ? { thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH } } : {}),
+          ...(model === ModelTier.FLASH ? { tools: [{ googleSearch: {} }] } : {})
+        }
+      });
+
+      for await (const chunk of responseStream) {
+        if (chunk.text) {
+          yield chunk.text;
+        }
+      }
+    } catch (error) {
+      console.error("Gemini Stream Error:", error);
+      throw error;
+    }
   }
 };
 
-export const generateImage = async (prompt: string): Promise<string> => {
+export const generateImage = async (prompt: string, aspectRatio: string = "1:1"): Promise<string> => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
-
+  
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: `Generate a high-quality photograph: ${prompt}. Photorealistic, professional lighting, high resolution.`,
+      model: 'gemini-3.1-flash-image-preview',
+      contents: prompt,
       config: {
-        responseModalities: ['TEXT', 'IMAGE'],
-      },
+        imageConfig: {
+          aspectRatio: aspectRatio as any,
+          imageSize: "1K"
+        }
+      }
     });
 
     for (const part of response.candidates?.[0]?.content?.parts || []) {
@@ -416,55 +563,161 @@ export const generateImage = async (prompt: string): Promise<string> => {
   }
 };
 
-function buildPlaceholderSvg(prompt: string): string {
-  const escaped = prompt.replace(/[<>&"']/g, '').substring(0, 60);
-  return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#1e293b"/><stop offset="100%" style="stop-color:#334155"/></linearGradient></defs><rect width="400" height="300" fill="url(#g)"/><text x="200" y="140" fill="#94a3b8" font-family="system-ui" font-size="13" text-anchor="middle">${escaped}</text><text x="200" y="170" fill="#475569" font-family="system-ui" font-size="11" text-anchor="middle">Image unavailable</text></svg>`)}`;
-}
+export const generateVideo = async (prompt: string, aspectRatio: string = "16:9"): Promise<string> => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) throw new Error("API Key not found");
 
-export const processAiImages = async (
-  html: string,
-  onProgress?: (completed: number, total: number) => void
-): Promise<string> => {
+  const ai = new GoogleGenAI({ apiKey });
+  
+  try {
+    let operation = await ai.models.generateVideos({
+      model: 'veo-3.1-fast-generate-preview',
+      prompt: prompt,
+      config: {
+        numberOfVideos: 1,
+        resolution: '720p',
+        aspectRatio: aspectRatio as any
+      }
+    });
+
+    while (!operation.done) {
+      await new Promise(resolve => setTimeout(resolve, 10000));
+      operation = await ai.operations.getVideosOperation({operation: operation});
+    }
+
+    const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
+    if (!downloadLink) return '';
+
+    // Fetch the video and convert to blob URL for the iframe
+    const response = await fetch(downloadLink, {
+      method: 'GET',
+      headers: {
+        'x-goog-api-key': apiKey,
+      },
+    });
+    
+    if (!response.ok) return '';
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
+  } catch (error) {
+    console.error("Video Generation Error:", error);
+    return '';
+  }
+};
+
+export const processAiImages = async (html: string): Promise<string> => {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
   const images = Array.from(doc.querySelectorAll('img[data-ai-prompt]'));
+  const videos = Array.from(doc.querySelectorAll('video[data-ai-prompt]'));
 
-  if (images.length === 0) return html;
+  if (images.length === 0 && videos.length === 0) return html;
 
-  const total = images.length;
-  let completed = 0;
-  onProgress?.(0, total);
-
-  const BATCH_SIZE = 4;
-  for (let i = 0; i < images.length; i += BATCH_SIZE) {
-    const batch = images.slice(i, i + BATCH_SIZE);
-    await Promise.all(batch.map(async (img) => {
-      const prompt = img.getAttribute('data-ai-prompt');
-      if (!prompt) {
-        completed++;
-        onProgress?.(completed, total);
-        return;
+  const imagePromises = images.map(async (img) => {
+    const prompt = img.getAttribute('data-ai-prompt');
+    const aspectRatio = img.getAttribute('data-ai-aspect-ratio') || "1:1";
+    if (!prompt) return;
+    
+    // Set a loading state or placeholder
+    img.setAttribute('src', 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiMzMzMiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZmlsbD0iI2ZmZiIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+R2VuZXJhdGluZyBJbWFnZS4uLjwvdGV4dD48L3N2Zz4=');
+    
+    try {
+      const base64Image = await generateImage(prompt, aspectRatio);
+      if (base64Image) {
+        img.setAttribute('src', base64Image);
+        img.removeAttribute('data-ai-prompt');
+        img.removeAttribute('data-ai-aspect-ratio');
       }
+    } catch (e) {
+      console.error("Failed to generate image for prompt:", prompt, e);
+    }
+  });
 
-      try {
-        const base64Image = await generateImage(prompt);
-        if (base64Image) {
-          img.setAttribute('src', base64Image);
-          img.removeAttribute('data-ai-prompt');
-        } else {
-          img.setAttribute('src', buildPlaceholderSvg(prompt));
-        }
-      } catch {
-        img.setAttribute('src', buildPlaceholderSvg(prompt));
+  const videoPromises = videos.map(async (vid) => {
+    const prompt = vid.getAttribute('data-ai-prompt');
+    const aspectRatio = vid.getAttribute('data-ai-aspect-ratio') || "16:9";
+    if (!prompt) return;
+    
+    try {
+      const videoUrl = await generateVideo(prompt, aspectRatio);
+      if (videoUrl) {
+        vid.setAttribute('src', videoUrl);
+        vid.setAttribute('autoplay', 'true');
+        vid.setAttribute('loop', 'true');
+        vid.setAttribute('muted', 'true');
+        vid.removeAttribute('data-ai-prompt');
+        vid.removeAttribute('data-ai-aspect-ratio');
       }
+    } catch (e) {
+      console.error("Failed to generate video for prompt:", prompt, e);
+    }
+  });
 
-      completed++;
-      onProgress?.(completed, total);
-    }));
-  }
-
+  await Promise.all([...imagePromises, ...videoPromises]);
   const doctype = html.match(/^<!DOCTYPE[^>]*>/i)?.[0] || '<!DOCTYPE html>';
   return `${doctype}\n${doc.documentElement.outerHTML}`;
+};
+
+export const generateWebContainerApp = async (
+  url: string,
+  model: ModelTier,
+  deviceType: 'desktop' | 'tablet' | 'mobile' | 'vr' | 'ar' = 'desktop'
+): Promise<Record<string, any>> => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) throw new Error("API Key not found");
+
+  const ai = new GoogleGenAI({ apiKey });
+
+  const prompt = `
+    [REQUEST_TYPE: WEBCONTAINER_APP_GENERATION]
+    [URL: "${url}"]
+    [DEVICE_TYPE: "${deviceType}"]
+
+    TASK: Generate a complete, working Node.js/Express or Vite/React application based on the URL prompt.
+    The URL acts as a natural language prompt (e.g., "wc://react-todo-app" or "wc://express-api").
+    
+    You MUST return ONLY a valid JSON object representing the file tree.
+    Do NOT wrap the JSON in markdown blocks like \`\`\`json.
+    
+    The JSON structure must match the WebContainer FileSystemTree format:
+    {
+      "package.json": {
+        "file": {
+          "contents": "{\\"name\\": \\"app\\", \\"scripts\\": {\\"dev\\": \\"vite\\"}}"
+        }
+      },
+      "src": {
+        "directory": {
+          "main.tsx": {
+            "file": {
+              "contents": "console.log('hello')"
+            }
+          }
+        }
+      }
+    }
+    
+    Ensure you include all necessary files (package.json, index.html, source files).
+    For React apps, use Vite. Include vite.config.js if needed.
+    The dev script in package.json MUST be named "dev" (e.g., "dev": "vite" or "dev": "node server.js").
+  `;
+
+  const response = await ai.models.generateContent({
+    model: model,
+    contents: prompt,
+    config: {
+      temperature: 0.7,
+      responseMimeType: "application/json",
+    }
+  });
+
+  const text = response.text || "{}";
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    console.error("Failed to parse WebContainer JSON:", text);
+    throw new Error("Failed to generate valid WebContainer file tree.");
+  }
 };
 
 export const generatePageContent = async (
@@ -480,11 +733,35 @@ export const generatePageContent = async (
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
+  
+  let stateString = virtualState && Object.keys(virtualState).length > 0 
+    ? JSON.stringify(virtualState) 
+    : 'None';
+  if (stateString.length > 50000) {
+    stateString = stateString.substring(0, 50000) + '... [TRUNCATED DUE TO SIZE]';
+  }
 
-  const stateString = truncateState(virtualState);
-  const prompt = buildPrompt(url, stateString, deviceType, soundEnabled, isDeepResearch, browserEra);
-
-  const isFlash = model === ModelTier.FLASH;
+  const prompt = `
+    [REQUEST_TYPE: SERVER_GET]
+    [TARGET_URL: "${url}"]
+    [BROWSER_USER_AGENT: "InfiniteWeb/4.0 (LatentSpace; Interactive)"]
+    [DEVICE_TYPE: "${deviceType}"]
+    [SOUND_ENABLED: ${soundEnabled ? 'TRUE' : 'FALSE'}]
+    [DEEP_RESEARCH_MODE: ${isDeepResearch ? 'ENABLED' : 'DISABLED'}]
+    [CURRENT_BROWSER_STATE: ${stateString}]
+    [BROWSER_ERA: "${browserEra}"]
+    
+    TASK: Execute the generation of the page at the target URL. 
+    CRITICAL DEVICE INSTRUCTION: The user is viewing this on a ${deviceType} screen. You MUST optimize the layout, typography, and interactive elements specifically for ${deviceType}. Use Tailwind's responsive prefixes (sm:, md:, lg:) appropriately, but ensure the default/base classes look perfect for ${deviceType}.
+    ${deviceType === 'vr' ? "CRITICAL VR INSTRUCTION: This is a Virtual Reality experience. You MUST use A-Frame (<script src=\"https://aframe.io/releases/1.4.2/aframe.min.js\"></script>) or Three.js to render a fully immersive 3D environment. Include interactive 3D objects, a skybox, and camera controls." : ""}
+    ${deviceType === 'ar' ? "CRITICAL AR INSTRUCTION: This is an Augmented Reality experience. You MUST use A-Frame with AR.js or WebXR to render an AR scene. The background of the iframe is transparent, so do NOT render a skybox or solid background color. Render 3D objects floating in space." : ""}
+    ${soundEnabled ? "CRITICAL AUDIO INSTRUCTION: Sound is ENABLED. You MUST integrate rich audio features. Use Tone.js for procedural background music or synthesizers, and Howler.js for UI sound effects. Create an immersive soundscape that reacts to user interactions. Make sure audio context is started on first user interaction." : ""}
+    CRITICAL ERA INSTRUCTION: The user has selected the browser era "${browserEra}". You MUST style the page to look exactly like a website from that era. For example, if 1995, use tables for layout, default gray backgrounds, blue links, and Times New Roman. If 2001, use early CSS, bevels, and smaller fonts. If 2010, use gradients, rounded corners, and early responsive design. If 2035, use neural interfaces, holographic elements, and highly advanced spatial computing concepts. Do NOT use modern Tailwind classes if they conflict with the era's aesthetic, but you may use Tailwind to achieve the era's look.
+    CRITICAL STATE INSTRUCTION: If CURRENT_BROWSER_STATE is provided and contains data (e.g., localStorage, sessionStorage, cookies), you MUST render the page to reflect this state. For example, if the state indicates the user is logged in, render the authenticated dashboard/profile. If the state contains shopping cart items, render the cart with those items.
+    ${isDeepResearch ? "CRITICAL: Perform deep architectural reasoning. Ensure every single JS component is flawless and robust. Optimize for maximum visual fidelity." : ""}
+    If this is a known brand site, simulate its high-fidelity alternative universe version.
+    If it is a tool or game, make it fully production-ready.
+  `;
 
   try {
     const response = await ai.models.generateContent({
@@ -492,12 +769,9 @@ export const generatePageContent = async (
       contents: prompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: isDeepResearch ? 0.8 : 0.7,
-        thinkingConfig: {
-          thinkingBudget: isFlash
-            ? (isDeepResearch ? 8192 : 4096)
-            : (isDeepResearch ? 12000 : 6000)
-        },
+        temperature: isDeepResearch ? 0.9 : 0.7,
+        ...(model === ModelTier.PRO ? { thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH } } : {}),
+        ...(model === ModelTier.FLASH ? { tools: [{ googleSearch: {} }] } : {})
       }
     });
 
@@ -521,25 +795,27 @@ export const refinePageContent = async (
 
   const ai = new GoogleGenAI({ apiKey });
 
-  const isFlash = model === ModelTier.FLASH;
+  const prompt = `
+    [REQUEST_TYPE: CODE_REFINEMENT]
+    [INSTRUCTION: "${instruction}"]
+    [DEVICE_TYPE: "${deviceType}"]
+    [SOUND_ENABLED: ${soundEnabled ? 'TRUE' : 'FALSE'}]
+    [BROWSER_ERA: "${browserEra}"]
 
-  const prompt = `[REQUEST_TYPE: CODE_REFINEMENT]
-[INSTRUCTION: "${instruction}"]
-[DEVICE_TYPE: "${deviceType}"]
-[SOUND_ENABLED: ${soundEnabled ? 'TRUE' : 'FALSE'}]
-[BROWSER_ERA: "${browserEra}"]
+    TASK: Modify the existing HTML source to satisfy the user's request. 
+    CRITICAL DEVICE INSTRUCTION: The user is viewing this on a ${deviceType} screen. You MUST optimize the layout, typography, and interactive elements specifically for ${deviceType}. Use Tailwind's responsive prefixes (sm:, md:, lg:) appropriately, but ensure the default/base classes look perfect for ${deviceType}.
+    ${deviceType === 'vr' ? "CRITICAL VR INSTRUCTION: This is a Virtual Reality experience. You MUST use A-Frame (<script src=\"https://aframe.io/releases/1.4.2/aframe.min.js\"></script>) or Three.js to render a fully immersive 3D environment. Include interactive 3D objects, a skybox, and camera controls." : ""}
+    ${deviceType === 'ar' ? "CRITICAL AR INSTRUCTION: This is an Augmented Reality experience. You MUST use A-Frame with AR.js or WebXR to render an AR scene. The background of the iframe is transparent, so do NOT render a skybox or solid background color. Render 3D objects floating in space." : ""}
+    ${soundEnabled ? "CRITICAL AUDIO INSTRUCTION: Sound is ENABLED. You MUST integrate rich audio features. Use Tone.js for procedural background music or synthesizers, and Howler.js for UI sound effects. Create an immersive soundscape that reacts to user interactions. Make sure audio context is started on first user interaction." : ""}
+    CRITICAL ERA INSTRUCTION: The user has selected the browser era "${browserEra}". You MUST style the page to look exactly like a website from that era. For example, if 1995, use tables for layout, default gray backgrounds, blue links, and Times New Roman. If 2001, use early CSS, bevels, and smaller fonts. If 2010, use gradients, rounded corners, and early responsive design. If 2035, use neural interfaces, holographic elements, and highly advanced spatial computing concepts. Do NOT use modern Tailwind classes if they conflict with the era's aesthetic, but you may use Tailwind to achieve the era's look.
+    Keep all injected bridge scripts intact. 
+    Maintain the design system.
+    Return the FULL updated HTML source.
 
-Modify the existing HTML source to satisfy the user's request.
-${deviceType !== 'desktop' ? `Optimize for ${deviceType} viewport.` : ''}
-${soundEnabled ? 'Audio is enabled — integrate Tone.js/Howler.js as appropriate.' : ''}
-${browserEra !== 'default' ? `Style must match the "${browserEra}" era aesthetic.` : ''}
-Keep all injected bridge scripts intact. Maintain the design system.
-CRITICAL: Ensure ALL buttons, links, and interactive elements navigate or perform actions. Zero dead elements.
-Return the FULL updated HTML source starting with <!DOCTYPE html>.
-
-[CURRENT_SOURCE_START]
-${currentHtml}
-[CURRENT_SOURCE_END]`;
+    [CURRENT_SOURCE_START]
+    ${currentHtml}
+    [CURRENT_SOURCE_END]
+  `;
 
   try {
     const response = await ai.models.generateContent({
@@ -548,9 +824,7 @@ ${currentHtml}
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
         temperature: 0.4,
-        thinkingConfig: {
-          thinkingBudget: isFlash ? 2048 : 4000,
-        },
+        ...(model === ModelTier.PRO ? { thinkingConfig: { thinkingBudget: 4000 } } : {})
       }
     });
 
@@ -572,25 +846,32 @@ export const generateApiResponse = async (
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
+  
+  let stateString = virtualState && Object.keys(virtualState).length > 0 
+    ? JSON.stringify(virtualState) 
+    : 'None';
+  if (stateString.length > 50000) {
+    stateString = stateString.substring(0, 50000) + '... [TRUNCATED DUE TO SIZE]';
+  }
 
-  const stateString = truncateState(virtualState);
-
-  const prompt = `[REQUEST_TYPE: API_CALL]
-[ENDPOINT: "${url}"]
-[METHOD: "${method}"]
-[REQUEST_BODY: ${body ? (typeof body === 'string' ? body : JSON.stringify(body)) : 'None'}]
-[CURRENT_BROWSER_STATE: ${stateString}]
-
-Generate a realistic JSON response for this API endpoint.
-You are simulating the backend server for this application.
-Return ONLY valid JSON. No markdown formatting, no explanations, no code blocks.`;
+  const prompt = `
+    [REQUEST_TYPE: API_CALL]
+    [ENDPOINT: "${url}"]
+    [METHOD: "${method}"]
+    [REQUEST_BODY: ${body ? (typeof body === 'string' ? body : JSON.stringify(body)) : 'None'}]
+    [CURRENT_BROWSER_STATE: ${stateString}]
+    
+    TASK: Generate a realistic JSON response for this API endpoint.
+    You are simulating the backend server for this application.
+    Return ONLY valid JSON. No markdown formatting, no explanations, no code blocks.
+  `;
 
   try {
     const response = await ai.models.generateContent({
       model: model,
       contents: prompt,
       config: {
-        systemInstruction: "You are a mock API server. Return only raw JSON. Generate realistic, contextual data using diverse names, values, and timestamps.",
+        systemInstruction: "You are a mock API server. Return only raw JSON.",
         temperature: 0.7
       }
     });
@@ -601,5 +882,31 @@ Return ONLY valid JSON. No markdown formatting, no explanations, no code blocks.
   } catch (error) {
     console.error("API Generation Error:", error);
     return "{}";
+  }
+};
+
+export const transcribeAudio = async (base64Audio: string, mimeType: string): Promise<string> => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) throw new Error("API Key not found");
+
+  const ai = new GoogleGenAI({ apiKey });
+  
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [
+        {
+          inlineData: {
+            data: base64Audio,
+            mimeType: mimeType
+          }
+        },
+        "Transcribe this audio exactly as spoken. Return only the transcription."
+      ]
+    });
+    return response.text || '';
+  } catch (error) {
+    console.error("Audio Transcription Error:", error);
+    return '';
   }
 };

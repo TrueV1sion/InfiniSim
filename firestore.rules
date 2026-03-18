@@ -15,7 +15,7 @@ service cloud.firestore {
     }
     // Ensure uid field is not modified on update
     function uidNotModified() {
-      return !('uid' in request.resource.data) || request.resource.data.uid == resource.data.uid;
+      return !('uid' in request.resource.data) || !('uid' in resource.data) || request.resource.data.uid == resource.data.uid;
     }
     // Validate UserData
     function isValidUserData() {

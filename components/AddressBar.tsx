@@ -236,6 +236,47 @@ const AddressBar: React.FC<AddressBarProps> = ({
         <div className="absolute inset-y-0 right-2 flex items-center gap-1">
             <button
                 type="button"
+                onClick={async () => {
+                  try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    const mediaRecorder = new MediaRecorder(stream);
+                    const audioChunks: BlobPart[] = [];
+                    
+                    mediaRecorder.addEventListener("dataavailable", event => {
+                      audioChunks.push(event.data);
+                    });
+
+                    mediaRecorder.addEventListener("stop", async () => {
+                      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                      const reader = new FileReader();
+                      reader.readAsDataURL(audioBlob);
+                      reader.onloadend = async () => {
+                        const base64Audio = (reader.result as string).split(',')[1];
+                        const { transcribeAudio } = await import('../services/geminiService');
+                        const transcription = await transcribeAudio(base64Audio, 'audio/webm');
+                        if (transcription) {
+                          setInputVal(transcription);
+                          onNavigate(transcription);
+                        }
+                      };
+                    });
+
+                    mediaRecorder.start();
+                    setTimeout(() => {
+                      mediaRecorder.stop();
+                      stream.getTracks().forEach(track => track.stop());
+                    }, 5000); // Record for 5 seconds
+                  } catch (e) {
+                    console.error("Microphone error", e);
+                  }
+                }}
+                className="p-1.5 rounded-md transition-colors text-gray-600 hover:text-blue-400 hover:bg-white/5"
+                title="Voice Navigation (Hold to speak)"
+            >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+            </button>
+            <button
+                type="button"
                 onClick={() => navigator.clipboard.writeText(inputVal)}
                 className="p-1.5 rounded-md transition-colors text-gray-600 hover:text-gray-400 hover:bg-white/5"
                 title="Copy URL"

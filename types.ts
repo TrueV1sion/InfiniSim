@@ -42,6 +42,7 @@ export interface WebPage {
   isLoading: boolean;
   error?: string;
   generatedBy: ModelTier;
+  webContainerUrl?: string;
 }
 
 export interface GenerationConfig {

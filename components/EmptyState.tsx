@@ -6,7 +6,9 @@ const SUGGESTIONS = [
   { url: "global-news-stream.live", label: "Real-time News Portal", icon: "📰" },
   { url: "cyberpunk-arena-3d.play", label: "3D Cyberpunk Arena", icon: "🎮" },
   { url: "mars-colony-dashboard.org", label: "Mars Base Control", icon: "🚀" },
-  { url: "ai-civilization-simulator.gov", label: "Civ Sim Dashboard", icon: "🤖" }
+  { url: "ai-civilization-simulator.gov", label: "Civ Sim Dashboard", icon: "🤖" },
+  { url: "hacker-news-reader.app", label: "Hacker News Reader (InfiniteAPI)", icon: "👾" },
+  { url: "weather-dashboard.app", label: "Live Weather Dashboard (InfiniteAPI)", icon: "🌤️" }
 ];
 
 interface EmptyStateProps {

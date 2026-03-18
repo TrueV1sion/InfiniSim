@@ -5,8 +5,10 @@ import EmptyState from './components/EmptyState';
 import HistoryPanel from './components/HistoryPanel';
 import DevToolsPanel from './components/DevToolsPanel';
 import DownloadsPanel from './components/DownloadsPanel';
+import { LiveCopilot } from './components/LiveCopilot';
 import { ModelTier, WebPage, HistoryItem, Bookmark, DownloadItem, BrowserEra } from './types';
-import { refinePageContent, generatePageContentStream, processAiImages, cleanHtml, PRELOADED_SCRIPTS, generateApiResponse } from './services/geminiService';
+import { refinePageContent, generatePageContentStream, processAiImages, cleanHtml, PRELOADED_SCRIPTS, generateApiResponse, generateWebContainerApp } from './services/geminiService';
+import { mountFiles, startDevServer } from './services/webContainerService';
 import { auth, db, signInWithGoogle, logout } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, getDoc, collection, addDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
@@ -25,9 +27,36 @@ const getStored = <T,>(key: string, fallback: T): T => {
 
 const setStored = (key: string, value: any) => {
   try {
-    localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
-  } catch (e) {
-    console.error('Local storage error:', e);
+    const serialized = JSON.stringify(value);
+    localStorage.setItem(STORAGE_PREFIX + key, serialized);
+  } catch (e: any) {
+    const isQuotaExceeded = e instanceof DOMException && (
+      e.name === 'QuotaExceededError' ||
+      e.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+      e.code === 22 ||
+      e.code === 1014
+    );
+
+    if (isQuotaExceeded) {
+      if (key === 'virtualState') {
+        console.warn('Virtual state too large for localStorage, clearing stored state.');
+        try {
+          localStorage.removeItem(STORAGE_PREFIX + key);
+        } catch (removeErr) {
+          // Ignore
+        }
+      } else if (key === 'history' && Array.isArray(value) && value.length > 10) {
+        try {
+          localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value.slice(-10)));
+        } catch (e2) {
+          console.error('Still too large after trimming history.');
+        }
+      } else {
+        console.error('Local storage quota exceeded for key:', key);
+      }
+    } else {
+      console.error('Local storage error:', e);
+    }
   }
 };
 
@@ -92,6 +121,7 @@ const App: React.FC = () => {
   const currentRequestRef = useRef<number>(0);
   const [hasKey, setHasKey] = useState<boolean>(true);
   const [loadingProgress, setLoadingProgress] = useState(0);
+  const [webContainerOutput, setWebContainerOutput] = useState<string>('');
 
   // Firebase Auth State
   const [user, setUser] = useState<User | null>(null);
@@ -137,12 +167,22 @@ const App: React.FC = () => {
     if (user && isAuthReady) {
       const syncData = async () => {
         try {
+          let stateToSync = virtualState;
+          try {
+            if (JSON.stringify(virtualState).length > 500000) {
+              console.warn("Virtual state too large for Firestore, clearing it.");
+              stateToSync = {};
+            }
+          } catch (e) {
+            stateToSync = {};
+          }
+
           await setDoc(doc(db, 'users', user.uid), {
             uid: user.uid,
-            history,
-            bookmarks,
-            downloads,
-            virtualState,
+            history: history.slice(-50),
+            bookmarks: bookmarks.slice(-100),
+            downloads: downloads.slice(-50),
+            virtualState: stateToSync,
             updatedAt: Date.now()
           }, { merge: true });
         } catch (error) {
@@ -260,6 +300,37 @@ const App: React.FC = () => {
             generatedBy: model
           });
         }
+        return;
+      }
+
+      if (url.startsWith('wc://')) {
+        setWebContainerOutput('Booting WebContainer...\n');
+        
+        // 1. Generate file tree
+        setWebContainerOutput(prev => prev + 'Generating application files...\n');
+        const fileTree = await generateWebContainerApp(url, model, deviceType);
+        
+        // 2. Mount files
+        setWebContainerOutput(prev => prev + 'Mounting files to virtual file system...\n');
+        await mountFiles(fileTree);
+        
+        // 3. Start dev server
+        setWebContainerOutput(prev => prev + 'Starting development server...\n');
+        await startDevServer(
+          (data) => setWebContainerOutput(prev => prev + data),
+          (wcUrl) => {
+            if (currentRequestRef.current === requestId) {
+              setPageData({
+                url,
+                content: '<html><body>WebContainer App Loading...</body></html>',
+                title: url,
+                isLoading: false,
+                generatedBy: model,
+                webContainerUrl: wcUrl
+              });
+            }
+          }
+        );
         return;
       }
 
@@ -438,6 +509,22 @@ const App: React.FC = () => {
     navigateTo(finalUrl, false, state);
   };
 
+  const handleIframeUrlUpdate = (targetUrl: string, state?: any) => {
+    let finalUrl = targetUrl;
+    if (targetUrl.startsWith('/')) {
+       try {
+         const currentObj = new URL(currentUrl.startsWith('http') ? currentUrl : `https://${currentUrl}`);
+         finalUrl = currentObj.origin + targetUrl;
+       } catch (e) {
+         finalUrl = targetUrl;
+       }
+    }
+    setCurrentUrl(finalUrl);
+    if (state) {
+      setVirtualState(state);
+    }
+  };
+
   const handleStateUpdate = (state: any) => {
     setVirtualState(state);
   };
@@ -599,30 +686,90 @@ const App: React.FC = () => {
     }
   };
 
-  const handleApiCall = async (url: string, method: string, body: any, state: any, requestId: string) => {
+  const handleApiCall = async (url: string, method: string, body: any, state: any, requestId: string, source?: MessageEventSource) => {
     try {
-      const responseBody = await generateApiResponse(url, method, body, state, model);
+      let responseBody: any;
+      let status = 200;
+
+      if (url === 'infinite://api/proxy') {
+        // Proxy fetch request to bypass CORS
+        const proxyUrl = body.url;
+        const proxyOptions = body.options || {};
+        
+        try {
+          const res = await fetch('/api/proxy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: proxyUrl, ...proxyOptions })
+          });
+          responseBody = await res.text();
+          status = res.status;
+        } catch (e: any) {
+          responseBody = { error: e.message };
+          status = 500;
+        }
+      } else if (url === 'infinite://api/notify') {
+        // Show a notification (using standard browser notification or just alert for now)
+        if (Notification.permission === 'granted') {
+          new Notification(body.title || 'InfiniteWeb', { body: body.message });
+        } else if (Notification.permission !== 'denied') {
+          Notification.requestPermission().then(permission => {
+            if (permission === 'granted') {
+              new Notification(body.title || 'InfiniteWeb', { body: body.message });
+            }
+          });
+        }
+        responseBody = { success: true };
+      } else if (url === 'infinite://api/store/set') {
+        // Store data globally
+        setStored(`shared_${body.key}`, body.value);
+        responseBody = { success: true };
+      } else if (url === 'infinite://api/store/get') {
+        // Retrieve global data
+        responseBody = { value: getStored(`shared_${body.key}`, null) };
+      } else {
+        // Fallback to AI generated API response
+        responseBody = await generateApiResponse(url, method, body, state, model);
+      }
       
       // Send the response back to the iframe
-      const iframes = document.getElementsByTagName('iframe');
-      if (iframes.length > 0 && iframes[0].contentWindow) {
-        iframes[0].contentWindow.postMessage({
+      if (source && 'postMessage' in source) {
+        (source as Window).postMessage({
           type: 'INFINITE_WEB_API_RESPONSE',
           requestId,
           body: responseBody,
-          status: 200
+          status
         }, '*');
+      } else {
+        const iframes = document.getElementsByTagName('iframe');
+        if (iframes.length > 0 && iframes[0].contentWindow) {
+          iframes[0].contentWindow.postMessage({
+            type: 'INFINITE_WEB_API_RESPONSE',
+            requestId,
+            body: responseBody,
+            status
+          }, '*');
+        }
       }
     } catch (e) {
       console.error("API Call Error:", e);
-      const iframes = document.getElementsByTagName('iframe');
-      if (iframes.length > 0 && iframes[0].contentWindow) {
-        iframes[0].contentWindow.postMessage({
+      if (source && 'postMessage' in source) {
+        (source as Window).postMessage({
           type: 'INFINITE_WEB_API_RESPONSE',
           requestId,
           body: JSON.stringify({ error: "Internal Server Error" }),
           status: 500
         }, '*');
+      } else {
+        const iframes = document.getElementsByTagName('iframe');
+        if (iframes.length > 0 && iframes[0].contentWindow) {
+          iframes[0].contentWindow.postMessage({
+            type: 'INFINITE_WEB_API_RESPONSE',
+            requestId,
+            body: JSON.stringify({ error: "Internal Server Error" }),
+            status: 500
+          }, '*');
+        }
       }
     }
   };
@@ -841,7 +988,9 @@ const App: React.FC = () => {
               title={pageData.title}
               isLoading={loading}
               deviceType={deviceType}
+              webContainerUrl={pageData.webContainerUrl}
               onNavigate={handleIframeNavigate}
+              onUrlUpdate={handleIframeUrlUpdate}
               onSelectKey={handleSelectKey}
               onStateUpdate={handleStateUpdate}
               onApiCall={handleApiCall}
@@ -858,11 +1007,28 @@ const App: React.FC = () => {
             model={model}
             onApplyCode={handleManualCodeUpdate}
             onAiRefine={handleAiRefine}
+            onClearCache={() => setVirtualState({})}
             isGenerating={isRefining}
             onClose={() => setIsDevToolsOpen(false)}
+            webContainerOutput={webContainerOutput}
           />
         )}
       </div>
+      <LiveCopilot 
+        onNavigate={navigateTo}
+        onScroll={(direction) => {
+          const iframe = document.querySelector('iframe');
+          if (iframe && iframe.contentWindow) {
+            iframe.contentWindow.postMessage({ type: 'INFINITE_WEB_SCROLL', direction }, '*');
+          }
+        }}
+        onReadPage={() => {
+          if (!pageData) return "The page is empty.";
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(pageData.content, 'text/html');
+          return doc.body.textContent || "The page has no text.";
+        }}
+      />
       <style>{`
         @keyframes loading-progress {
           0% { transform: translateX(-100%); }
