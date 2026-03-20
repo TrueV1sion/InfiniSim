@@ -56,36 +56,7 @@ export interface ChatMessage {
   timestamp: number;
 }
 
-export type DeviceType = 'desktop' | 'tablet' | 'mobile' | 'vr' | 'ar';
-
-export interface NavigationState {
-  currentUrl: string;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  isLoading: boolean;
-}
-
-export interface BrowserConfig {
-  model: ModelTier;
-  deviceType: DeviceType;
-  browserEra: BrowserEra;
-  isDeepResearch: boolean;
-  isSoundEnabled: boolean;
-}
-
-export interface PanelState {
-  isDevToolsOpen: boolean;
-  isDownloadsOpen: boolean;
-  isBookmarked: boolean;
-}
-
-export interface UserState {
-  user: any;
-  canPublish: boolean;
-  canDownload: boolean;
-}
-
-export type NavigationAction =
+export type NavigationAction = 
   | { type: 'NAVIGATE'; url: string }
   | { type: 'BACK' }
   | { type: 'FORWARD' }

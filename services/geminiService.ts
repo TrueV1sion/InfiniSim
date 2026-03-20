@@ -37,23 +37,18 @@ const INJECTED_SCRIPT = `
 
     document.addEventListener('change', syncState);
 
-    // Override native dialogs with SweetAlert2 if available
-    if (window.Swal) {
-      window.alert = function(message) {
-        Swal.fire({ text: message, confirmButtonColor: '#3b82f6' });
-      };
-      window.confirm = function(message) {
-        // Note: Native confirm is synchronous, Swal is async. 
-        // We can't perfectly polyfill synchronous confirm, but we can try to warn or just return true for AI scripts that don't await.
-        // For best results, AI should use Swal directly, but this catches basic usages.
-        console.warn('window.confirm is deprecated in InfiniteWeb. Use Swal.fire() instead.');
-        return true; 
-      };
-      window.prompt = function(message, defaultText) {
-        console.warn('window.prompt is deprecated in InfiniteWeb. Use Swal.fire() instead.');
-        return defaultText || null;
-      };
-    }
+    // Suppress native dialogs to prevent blocking popups
+    window.alert = function(message) {
+      console.log('Alert suppressed:', message);
+    };
+    window.confirm = function(message) {
+      console.log('Confirm suppressed:', message);
+      return true;
+    };
+    window.prompt = function(message, defaultText) {
+      console.log('Prompt suppressed:', message);
+      return defaultText || null;
+    };
 
     // Provide a global navigation function for the AI to use
     window.navigateTo = function(url) {
@@ -256,6 +251,7 @@ You are InfiniteWeb 4.0, the world's most advanced generative web engine. You do
    - If you must navigate via JavaScript, call \`window.navigateTo('/your-url')\`. DO NOT use \`window.location.href\`.
    - For interactive features (like "Like", "Save", "Add to Cart", "Submit"), write the actual JavaScript to update the DOM, show toast notifications, and persist state to \`localStorage\`.
    - NEVER generate "dead" buttons. If a button is on the screen, it must perform its intended action or navigate to a relevant page.
+   - DO NOT generate welcome popups, cookie banners, or modal dialogs that appear immediately on page load. The user should see the main content immediately.
 3. **Dynamic Content**: Hallucinate realistic real-time updates using JS intervals. Timestamps should update, stock tickers should fluctuate, news feeds should rotate, and social media feeds should simulate incoming posts or notifications.
 4. **Variety of Website Types**: Be prepared to generate highly authentic e-commerce platforms (with working carts), social media networks (with interactive feeds), news portals (with breaking news banners), SaaS dashboards, and immersive 3D experiences.
 5. **Realistic Network Latency**: Simulate realistic network latency *within* the generated page. Use skeleton loaders, spinners, or progress bars initially, then use \`setTimeout\` (e.g., 800ms - 2000ms) to "fetch" and reveal the actual content, making it feel like a real web application loading data from a server.
@@ -274,7 +270,6 @@ You are InfiniteWeb 4.0, the world's most advanced generative web engine. You do
    - Tone.js (Procedural Music/Synths: \`new Tone.Synth()\`)
    - Marked.js (Markdown: \`marked.parse()\`)
    - Canvas Confetti (Delight: \`confetti()\`)
-   - SweetAlert2 (Dialogs: \`Swal.fire()\`. Note: native \`alert\`/\`confirm\` are overridden to use Swal)
    
    For the following specialized libraries, you MUST include their <script> tags if you need them:
    - Maps: Leaflet.js (<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" /><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>)
@@ -340,7 +335,6 @@ export const PRELOADED_SCRIPTS = `
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <script type="module">import { faker } from 'https://esm.sh/@faker-js/faker'; window.faker = faker;</script>
 `;
 
@@ -366,9 +360,10 @@ export const generatePageContentStream = async function* (
   virtualState?: any,
   deviceType: 'desktop' | 'tablet' | 'mobile' | 'vr' | 'ar' = 'desktop',
   soundEnabled: boolean = false,
-  browserEra: string = 'default'
+  browserEra: string = 'default',
+  imageBase64?: string | null
 ): AsyncGenerator<string, void, unknown> {
-  const apiKey = process.env.API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
@@ -387,6 +382,13 @@ export const generatePageContentStream = async function* (
     [CURRENT_BROWSER_STATE: ${stateString}]
     [BROWSER_ERA: "${browserEra}"]
   `;
+
+  const imagePart = imageBase64 ? {
+    inlineData: {
+      mimeType: imageBase64.split(';')[0].split(':')[1],
+      data: imageBase64.split(',')[1]
+    }
+  } : null;
 
   if (isDeepResearch) {
     // ============================================================================
@@ -408,13 +410,14 @@ Output ONLY raw HTML starting with <!DOCTYPE html>. No markdown formatting.
       ${baseContext}
       TASK: Generate the UI shell for the target URL. Make it visually stunning.
       Remember: Focus only on UI/UX. The Engineer will add the logic later.
+      ${imagePart ? 'Use the provided image as inspiration or a wireframe for the design.' : ''}
     `;
 
     let fullHtml = "";
     try {
       const designerStream = await ai.models.generateContentStream({
         model: model,
-        contents: designerPrompt,
+        contents: imagePart ? { parts: [imagePart, { text: designerPrompt }] } : designerPrompt,
         config: {
           systemInstruction: designerSystemInstruction,
           temperature: 0.8,
@@ -507,12 +510,13 @@ Output ONLY the <script>...</script> block. Do not output any other HTML. No mar
       CRITICAL IMAGE INSTRUCTION: To include images, you MUST use the attribute \`data-ai-prompt="<detailed image description>"\` on \`<img>\` tags instead of a real src. The system will generate these images in real-time. Example: \`<img data-ai-prompt="A futuristic cyberpunk neon sign" src="" alt="Neon sign" />\`
       If this is a known brand site, simulate its high-fidelity alternative universe version.
       If it is a tool or game, make it fully production-ready.
+      ${imagePart ? 'CRITICAL IMAGE INSTRUCTION: Use the provided image as a wireframe, sketch, or inspiration for the page layout and content.' : ''}
     `;
 
     try {
       const responseStream = await ai.models.generateContentStream({
         model: model,
-        contents: prompt,
+        contents: imagePart ? { parts: [imagePart, { text: prompt }] } : prompt,
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
           temperature: 0.7,
@@ -534,7 +538,7 @@ Output ONLY the <script>...</script> block. Do not output any other HTML. No mar
 };
 
 export const generateImage = async (prompt: string, aspectRatio: string = "1:1"): Promise<string> => {
-  const apiKey = process.env.API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
@@ -542,7 +546,13 @@ export const generateImage = async (prompt: string, aspectRatio: string = "1:1")
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3.1-flash-image-preview',
-      contents: prompt,
+      contents: {
+        parts: [
+          {
+            text: prompt,
+          },
+        ],
+      },
       config: {
         imageConfig: {
           aspectRatio: aspectRatio as any,
@@ -564,7 +574,7 @@ export const generateImage = async (prompt: string, aspectRatio: string = "1:1")
 };
 
 export const generateVideo = async (prompt: string, aspectRatio: string = "16:9"): Promise<string> => {
-  const apiKey = process.env.API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
@@ -663,7 +673,7 @@ export const generateWebContainerApp = async (
   model: ModelTier,
   deviceType: 'desktop' | 'tablet' | 'mobile' | 'vr' | 'ar' = 'desktop'
 ): Promise<Record<string, any>> => {
-  const apiKey = process.env.API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
@@ -720,6 +730,63 @@ export const generateWebContainerApp = async (
   }
 };
 
+export const generateWebContainerUpdate = async (
+  message: string,
+  model: ModelTier,
+  fileTree: any
+): Promise<Record<string, any>> => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("API Key not found");
+
+  const ai = new GoogleGenAI({ apiKey });
+
+  const prompt = `
+    [REQUEST_TYPE: WEBCONTAINER_APP_UPDATE]
+    [USER_MESSAGE: "${message}"]
+
+    [CURRENT_FILE_TREE]
+    ${JSON.stringify(fileTree, null, 2)}
+
+    TASK: The user is requesting an update to their WebContainer application.
+    Generate the necessary file updates based on their request and the current file tree.
+    
+    You MUST return ONLY a valid JSON object representing the updated file tree.
+    Do NOT wrap the JSON in markdown blocks like \`\`\`json.
+    
+    The JSON structure must match the WebContainer FileSystemTree format:
+    {
+      "src": {
+        "directory": {
+          "App.tsx": {
+            "file": {
+              "contents": "export default function App() { return <div>Updated</div> }"
+            }
+          }
+        }
+      }
+    }
+    
+    Only include the files that need to be created or modified.
+  `;
+
+  const response = await ai.models.generateContent({
+    model: model,
+    contents: prompt,
+    config: {
+      temperature: 0.7,
+      responseMimeType: "application/json",
+    }
+  });
+
+  const text = response.text || "{}";
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    console.error("Failed to parse WebContainer update JSON:", text);
+    throw new Error("Failed to generate valid WebContainer file tree update.");
+  }
+};
+
 export const generatePageContent = async (
   url: string,
   model: ModelTier,
@@ -729,7 +796,7 @@ export const generatePageContent = async (
   soundEnabled: boolean = false,
   browserEra: string = 'default'
 ): Promise<string> => {
-  const apiKey = process.env.API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
@@ -790,7 +857,7 @@ export const refinePageContent = async (
   soundEnabled: boolean = false,
   browserEra: string = 'default'
 ): Promise<string> => {
-  const apiKey = process.env.API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
@@ -842,7 +909,7 @@ export const generateApiResponse = async (
   virtualState: any,
   model: ModelTier
 ): Promise<string> => {
-  const apiKey = process.env.API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });
@@ -886,7 +953,7 @@ export const generateApiResponse = async (
 };
 
 export const transcribeAudio = async (base64Audio: string, mimeType: string): Promise<string> => {
-  const apiKey = process.env.API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("API Key not found");
 
   const ai = new GoogleGenAI({ apiKey });

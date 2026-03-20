@@ -1,7 +1,6 @@
 import React, { useEffect, useRef } from 'react';
-import { DeviceType } from '../types';
 
-export type { DeviceType };
+export type DeviceType = 'desktop' | 'tablet' | 'mobile' | 'vr' | 'ar';
 
 interface BrowserViewportProps {
   htmlContent: string;
@@ -9,14 +8,9 @@ interface BrowserViewportProps {
   isLoading?: boolean;
   deviceType?: DeviceType;
   webContainerUrl?: string;
-  onNavigate: (url: string, state?: any) => void;
-  onUrlUpdate?: (url: string, state?: any) => void;
-  onSelectKey?: () => void;
-  onStateUpdate?: (state: any) => void;
-  onApiCall?: (url: string, method: string, body: any, state: any, requestId: string, source: MessageEventSource) => void;
 }
 
-const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, isLoading, deviceType = 'desktop', webContainerUrl, onNavigate, onUrlUpdate, onSelectKey, onStateUpdate, onApiCall }) => {
+const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, isLoading, deviceType = 'desktop', webContainerUrl }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const previousHtmlRef = useRef('');
   const isDocOpenRef = useRef(false);
@@ -82,37 +76,6 @@ const BrowserViewport: React.FC<BrowserViewportProps> = ({ htmlContent, title, i
         }
     }
   }, [htmlContent, isLoading, webContainerUrl]);
-
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data && event.data.type === 'INFINITE_WEB_NAVIGATE') {
-        const targetUrl = event.data.url;
-        onNavigate(targetUrl, event.data.state);
-      } else if (event.data && event.data.type === 'INFINITE_WEB_URL_UPDATE' && onUrlUpdate) {
-        onUrlUpdate(event.data.url, event.data.state);
-      } else if (event.data && event.data.type === 'INFINITE_WEB_SELECT_KEY' && onSelectKey) {
-        onSelectKey();
-      } else if (event.data && event.data.type === 'INFINITE_WEB_STATE_UPDATE' && onStateUpdate) {
-        onStateUpdate(event.data.state);
-      } else if (event.data && event.data.type === 'INFINITE_WEB_API_CALL' && onApiCall && event.source) {
-        onApiCall(event.data.url, event.data.method, event.data.body, event.data.state, event.data.requestId, event.source);
-      } else if (event.data && event.data.type === 'INFINITE_WEB_XR_SESSION') {
-        console.log('XR Session initiated by AI generated content:', event.data.sessionType);
-        // Handle XR session logic here (e.g., show a UI overlay, request permissions)
-        if (event.data.sessionType === 'immersive-vr') {
-          // Example: Notify user or prepare environment for VR
-        } else if (event.data.sessionType === 'immersive-ar') {
-          // Example: Notify user or prepare environment for AR
-        }
-      } else if (event.data && event.data.type === 'INFINITE_WEB_XR_TRACKING') {
-        // Handle XR tracking data (e.g., pose, hit test results)
-        // console.log('XR Tracking Data:', event.data.trackingData);
-      }
-    };
-
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [onNavigate, onSelectKey, onStateUpdate, onApiCall]);
 
   const getDeviceStyles = () => {
     switch (deviceType) {

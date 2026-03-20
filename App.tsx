@@ -1,17 +1,21 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AddressBar from './components/AddressBar';
 import BrowserViewport from './components/BrowserViewport';
-import HomePage from './components/homepage/HomePage';
+import EmptyState from './components/EmptyState';
 import HistoryPanel from './components/HistoryPanel';
 import DevToolsPanel from './components/DevToolsPanel';
 import DownloadsPanel from './components/DownloadsPanel';
 import { LiveCopilot } from './components/LiveCopilot';
-import { ModelTier, WebPage, HistoryItem, Bookmark, DownloadItem, BrowserEra, DeviceType } from './types';
+import { ModelTier, WebPage, HistoryItem, Bookmark, DownloadItem, BrowserEra } from './types';
 import { refinePageContent, generatePageContentStream, processAiImages, cleanHtml, PRELOADED_SCRIPTS, generateApiResponse, generateWebContainerApp } from './services/geminiService';
 import { mountFiles, startDevServer } from './services/webContainerService';
 import { auth, db, signInWithGoogle, logout } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, getDoc, collection, addDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
+
+import WebContainerIDE from './components/WebContainerIDE';
+
+// ... other imports
 
 // Storage Helpers
 const STORAGE_PREFIX = 'infiniteWeb_';
@@ -60,6 +64,197 @@ const setStored = (key: string, value: any) => {
   }
 };
 
+const injectIframeScript = (html: string) => {
+  const script = `
+<script>
+  (function() {
+    // Intercept clicks on links
+    document.addEventListener('click', function(e) {
+      const link = e.target.closest('a');
+      if (link && link.href && !link.href.startsWith('javascript:')) {
+        e.preventDefault();
+        window.parent.postMessage({
+          type: 'INFINITE_WEB_NAVIGATE',
+          url: link.href,
+          state: {}
+        }, '*');
+      }
+    });
+
+    // Intercept form submissions
+    document.addEventListener('submit', function(e) {
+      e.preventDefault();
+      const form = e.target;
+      const formData = new FormData(form);
+      const data = Object.fromEntries(formData.entries());
+      const url = form.action || window.location.href;
+      const method = form.method || 'GET';
+      
+      if (method.toUpperCase() === 'GET') {
+        const params = new URLSearchParams(data);
+        const targetUrl = url.includes('?') ? url + '&' + params : url + '?' + params;
+        window.parent.postMessage({
+          type: 'INFINITE_WEB_NAVIGATE',
+          url: targetUrl,
+          state: {}
+        }, '*');
+      } else {
+        window.parent.postMessage({
+          type: 'INFINITE_WEB_API_CALL',
+          url: url,
+          method: method.toUpperCase(),
+          body: data,
+          state: {},
+          requestId: Math.random().toString(36).substring(7)
+        }, '*');
+      }
+    });
+
+    // Intercept history API
+    const originalPushState = history.pushState;
+    history.pushState = function(state, title, url) {
+      originalPushState.apply(this, arguments);
+      window.parent.postMessage({
+        type: 'INFINITE_WEB_URL_UPDATE',
+        url: new URL(url, window.location.href).href,
+        state: state
+      }, '*');
+    };
+
+    const originalReplaceState = history.replaceState;
+    history.replaceState = function(state, title, url) {
+      originalReplaceState.apply(this, arguments);
+      window.parent.postMessage({
+        type: 'INFINITE_WEB_URL_UPDATE',
+        url: new URL(url, window.location.href).href,
+        state: state
+      }, '*');
+    };
+    
+    // Listen for popstate
+    window.addEventListener('popstate', function(e) {
+      window.parent.postMessage({
+        type: 'INFINITE_WEB_URL_UPDATE',
+        url: window.location.href,
+        state: e.state
+      }, '*');
+    });
+
+    // Intercept fetch API
+    const originalFetch = window.fetch;
+    window.fetch = async function(...args) {
+      const url = typeof args[0] === 'string' ? args[0] : args[0].url;
+      // Only intercept relative URLs or URLs matching our domain
+      if (url.startsWith('/') || url.startsWith(window.location.origin)) {
+        const method = (args[1] && args[1].method) ? args[1].method : 'GET';
+        let body = args[1] && args[1].body;
+        if (body instanceof FormData) {
+           body = Object.fromEntries(body.entries());
+        } else if (typeof body === 'string') {
+           try { body = JSON.parse(body); } catch(e) {}
+        }
+        
+        return new Promise((resolve, reject) => {
+          const requestId = Math.random().toString(36).substring(7);
+          
+          const messageHandler = function(event) {
+            if (event.data && event.data.type === 'INFINITE_WEB_API_RESPONSE' && event.data.requestId === requestId) {
+              window.removeEventListener('message', messageHandler);
+              if (event.data.status >= 400) {
+                reject(new Error(event.data.body?.error || 'API Error'));
+              } else {
+                resolve(new Response(typeof event.data.body === 'string' ? event.data.body : JSON.stringify(event.data.body), {
+                  status: event.data.status || 200,
+                  headers: { 'Content-Type': 'application/json' }
+                }));
+              }
+            }
+          };
+          
+          window.addEventListener('message', messageHandler);
+          
+          window.parent.postMessage({
+            type: 'INFINITE_WEB_API_CALL',
+            url: new URL(url, window.location.href).href,
+            method: method.toUpperCase(),
+            body: body || {},
+            state: {},
+            requestId: requestId
+          }, '*');
+        });
+      }
+      return originalFetch.apply(this, args);
+    };
+    // Intercept XMLHttpRequest
+    const originalXHR = window.XMLHttpRequest;
+    window.XMLHttpRequest = function() {
+      const xhr = new originalXHR();
+      let method = 'GET';
+      let url = '';
+      let requestHeaders = {};
+      
+      const originalOpen = xhr.open;
+      xhr.open = function(m, u, ...rest) {
+        method = m;
+        url = typeof u === 'string' ? u : u.toString();
+        return originalOpen.apply(this, [m, u, ...rest]);
+      };
+      
+      const originalSetRequestHeader = xhr.setRequestHeader;
+      xhr.setRequestHeader = function(header, value) {
+        requestHeaders[header] = value;
+        return originalSetRequestHeader.apply(this, arguments);
+      };
+      
+      const originalSend = xhr.send;
+      xhr.send = function(body) {
+        if (url.startsWith('/') || url.startsWith(window.location.origin)) {
+          const requestId = Math.random().toString(36).substring(7);
+          
+          const messageHandler = function(event) {
+            if (event.data && event.data.type === 'INFINITE_WEB_API_RESPONSE' && event.data.requestId === requestId) {
+              window.removeEventListener('message', messageHandler);
+              
+              Object.defineProperty(xhr, 'readyState', { value: 4, writable: false });
+              Object.defineProperty(xhr, 'status', { value: event.data.status || 200, writable: false });
+              
+              const responseText = typeof event.data.body === 'string' ? event.data.body : JSON.stringify(event.data.body);
+              Object.defineProperty(xhr, 'responseText', { value: responseText, writable: false });
+              Object.defineProperty(xhr, 'response', { value: responseText, writable: false });
+              
+              if (xhr.onreadystatechange) xhr.onreadystatechange(new Event('readystatechange'));
+              if (xhr.onload) xhr.onload(new ProgressEvent('load'));
+            }
+          };
+          
+          window.addEventListener('message', messageHandler);
+          
+          let parsedBody = body;
+          if (typeof body === 'string') {
+            try { parsedBody = JSON.parse(body); } catch(e) {}
+          }
+          
+          window.parent.postMessage({
+            type: 'INFINITE_WEB_API_CALL',
+            url: new URL(url, window.location.href).href,
+            method: method.toUpperCase(),
+            body: parsedBody || {},
+            state: {},
+            requestId: requestId
+          }, '*');
+          return;
+        }
+        return originalSend.apply(this, arguments);
+      };
+      
+      return xhr;
+    };
+  })();
+</script>
+`;
+  return script + '\n' + html;
+};
+
 const App: React.FC = () => {
   // State initialization with localStorage fallback
   const [history, setHistory] = useState<HistoryItem[]>(() => 
@@ -82,7 +277,7 @@ const App: React.FC = () => {
     getStored('model', ModelTier.FLASH)
   );
 
-  const [deviceType, setDeviceType] = useState<DeviceType>(() =>
+  const [deviceType, setDeviceType] = useState<'desktop' | 'tablet' | 'mobile' | 'vr' | 'ar'>(() => 
     getStored('deviceType', 'desktop')
   );
 
@@ -133,8 +328,6 @@ const App: React.FC = () => {
       if (window.aistudio && window.aistudio.hasSelectedApiKey) {
         const selected = await window.aistudio.hasSelectedApiKey();
         setHasKey(selected);
-      } else if (!process.env.API_KEY) {
-        setHasKey(false);
       }
     };
     checkKey();
@@ -238,7 +431,7 @@ const App: React.FC = () => {
   }, [virtualState]);
 
   // Core navigation logic
-  const navigateTo = useCallback(async (url: string, isHistoryNav = false, incomingState?: any) => {
+  const navigateTo = useCallback(async (url: string, isHistoryNav = false, incomingState?: any, imageBase64?: string | null) => {
     const requestId = Date.now();
     currentRequestRef.current = requestId;
 
@@ -308,6 +501,17 @@ const App: React.FC = () => {
       if (url.startsWith('wc://')) {
         setWebContainerOutput('Booting WebContainer...\n');
         
+        if (currentRequestRef.current === requestId) {
+          setPageData({
+            url,
+            content: '<html><body style="background:#1e1e1e;color:#fff;font-family:monospace;padding:20px;">Booting WebContainer IDE...</body></html>',
+            title: url,
+            isLoading: true,
+            generatedBy: model,
+            webContainerUrl: '' // Empty until ready
+          });
+        }
+        
         // 1. Generate file tree
         setWebContainerOutput(prev => prev + 'Generating application files...\n');
         const fileTree = await generateWebContainerApp(url, model, deviceType);
@@ -331,13 +535,18 @@ const App: React.FC = () => {
                 webContainerUrl: wcUrl
               });
             }
+          },
+          (error) => {
+            if (currentRequestRef.current === requestId) {
+              setWebContainerOutput(prev => prev + `\n[Error] ${error}\n`);
+            }
           }
         );
         return;
       }
 
       // Generate content with deep research flag
-      const stream = await generatePageContentStream(url, model, deepResearch, stateToUse, deviceType, soundEnabled, browserEra);
+      const stream = await generatePageContentStream(url, model, deepResearch, stateToUse, deviceType, soundEnabled, browserEra, imageBase64);
       
       let accumulatedHtml = '';
       for await (const chunk of stream) {
@@ -403,7 +612,7 @@ const App: React.FC = () => {
           // ignore
         }
         
-        if (displayMessage.includes('Requested entity was not found') || displayMessage.includes('API Key not found')) {
+        if (displayMessage.includes('Requested entity was not found')) {
             setHasKey(false);
         } else if (displayMessage.includes('429') || displayMessage.includes('quota') || displayMessage.includes('RESOURCE_EXHAUSTED')) {
             const errorHtml = `
@@ -415,8 +624,8 @@ const App: React.FC = () => {
                     <div class="w-16 h-16 bg-red-500/10 text-red-500 rounded-2xl flex items-center justify-center mb-6">
                         <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                     </div>
-                    <h1 class="text-2xl font-bold mb-2">Quota Exceeded</h1>
-                    <p class="text-gray-400 text-sm mb-6 leading-relaxed">You have exceeded the quota for the current model (${model}). Please switch to the Flash model in the top right, or provide your own API key.</p>
+                    <h1 class="text-2xl font-bold mb-2">Rate Limit or Quota Exceeded</h1>
+                    <p class="text-gray-400 text-sm mb-6 leading-relaxed">The API returned a rate limit or quota error. If you are using a paid key, you might be hitting a requests-per-minute limit.<br/><br/><span class="text-xs text-red-400 font-mono">${displayMessage}</span></p>
                     <div class="flex flex-col gap-3">
                         <button onclick="window.parent.postMessage({ type: 'INFINITE_WEB_SELECT_KEY' }, '*')" class="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl transition-all font-semibold shadow-lg shadow-blue-600/20">Provide API Key</button>
                         <button onclick="window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: '${url}' }, '*')" class="w-full py-3 bg-white/10 hover:bg-white/20 rounded-xl transition-all font-semibold">Retry</button>
@@ -429,34 +638,6 @@ const App: React.FC = () => {
               url,
               content: errorHtml,
               title: 'Quota Exceeded',
-              isLoading: false,
-              generatedBy: model
-            });
-        } else if (displayMessage.toLowerCase().includes('upgrade') || displayMessage.includes('FAILED_PRECONDITION') || displayMessage.includes('billing')) {
-            const errorHtml = `
-              <!DOCTYPE html>
-              <html>
-              <head><script src="https://cdn.tailwindcss.com"></script></head>
-              <body class="bg-[#050505] text-white flex items-center justify-center min-h-screen p-10 font-sans">
-                <div class="max-w-md w-full p-8 rounded-3xl bg-white/5 border border-white/10 backdrop-blur-3xl shadow-[0_0_50px_rgba(239,68,68,0.1)]">
-                    <div class="w-16 h-16 bg-amber-500/10 text-amber-500 rounded-2xl flex items-center justify-center mb-6">
-                        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                    </div>
-                    <h1 class="text-2xl font-bold mb-2">Plan Upgrade Required</h1>
-                    <p class="text-gray-400 text-sm mb-6 leading-relaxed">The model <strong class="text-white">${model}</strong> requires a paid API plan. You can either upgrade your Google AI billing or switch to a different model.</p>
-                    <div class="flex flex-col gap-3">
-                        <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noreferrer" class="w-full py-3 bg-amber-600 hover:bg-amber-500 rounded-xl transition-all font-semibold shadow-lg shadow-amber-600/20 text-center block">View Billing Options</a>
-                        <button onclick="window.parent.postMessage({ type: 'INFINITE_WEB_SELECT_KEY' }, '*')" class="w-full py-3 bg-white/10 hover:bg-white/20 rounded-xl transition-all font-semibold">Change API Key</button>
-                        <button onclick="window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: '${url}' }, '*')" class="w-full py-3 bg-white/5 hover:bg-white/10 rounded-xl transition-all font-semibold text-gray-400">Retry</button>
-                    </div>
-                </div>
-              </body>
-              </html>
-            `;
-            setPageData({
-              url,
-              content: errorHtml,
-              title: 'Upgrade Required',
               isLoading: false,
               generatedBy: model
             });
@@ -526,7 +707,7 @@ const App: React.FC = () => {
   }, [history, historyIndex, model, deepResearch, virtualState]);
 
   // Handle iframe navigation requests (relative URL resolution)
-  const handleIframeNavigate = (targetUrl: string, state?: any) => {
+  const handleIframeNavigate = useCallback((targetUrl: string, state?: any) => {
     let finalUrl = targetUrl;
     if (targetUrl.startsWith('/')) {
        try {
@@ -537,9 +718,9 @@ const App: React.FC = () => {
        }
     }
     navigateTo(finalUrl, false, state);
-  };
+  }, [currentUrl, navigateTo]);
 
-  const handleIframeUrlUpdate = (targetUrl: string, state?: any) => {
+  const handleIframeUrlUpdate = useCallback((targetUrl: string, state?: any) => {
     let finalUrl = targetUrl;
     if (targetUrl.startsWith('/')) {
        try {
@@ -553,11 +734,11 @@ const App: React.FC = () => {
     if (state) {
       setVirtualState(state);
     }
-  };
+  }, [currentUrl]);
 
-  const handleStateUpdate = (state: any) => {
+  const handleStateUpdate = useCallback((state: any) => {
     setVirtualState(state);
-  };
+  }, []);
 
   const hasResumed = useRef(false);
   useEffect(() => {
@@ -662,15 +843,19 @@ const App: React.FC = () => {
     }
   };
 
-  const handleAiRefine = async (instruction: string) => {
+  const handleAiRefine = async (instruction: string, modelOverride?: ModelTier) => {
     if (!pageData) return;
     setIsRefining(true);
+    const targetModel = modelOverride || model;
+    setWebContainerOutput(prev => prev + `\n[${targetModel}] Refining page: ${instruction}\n`);
     try {
-      const newHtml = await refinePageContent(pageData.content, instruction, model, deviceType, soundEnabled, browserEra);
+      const newHtml = await refinePageContent(pageData.content, instruction, targetModel, deviceType, soundEnabled, browserEra);
       setPageData({
         ...pageData,
-        content: newHtml
+        content: newHtml,
+        generatedBy: targetModel
       });
+      setWebContainerOutput(prev => prev + `[${targetModel}] Page updated successfully.\n`);
     } catch (e) {
       console.error(e);
       let errorMessage = '';
@@ -703,7 +888,9 @@ const App: React.FC = () => {
         // ignore
       }
       
-      if (displayMessage.includes('Requested entity was not found') || displayMessage.includes('API Key not found')) {
+      setWebContainerOutput(prev => prev + `[${targetModel} Error] ${displayMessage}\n`);
+      
+      if (displayMessage.includes('Requested entity was not found')) {
           setHasKey(false);
       } else if (displayMessage.includes('429') || displayMessage.includes('quota') || displayMessage.includes('RESOURCE_EXHAUSTED')) {
           // Do not block the UI, just throw so DevToolsPanel can catch it
@@ -716,7 +903,7 @@ const App: React.FC = () => {
     }
   };
 
-  const handleApiCall = async (url: string, method: string, body: any, state: any, requestId: string, source?: MessageEventSource) => {
+  const handleApiCall = useCallback(async (url: string, method: string, body: any, state: any, requestId: string, source?: MessageEventSource) => {
     try {
       let responseBody: any;
       let status = 200;
@@ -759,7 +946,8 @@ const App: React.FC = () => {
         responseBody = { value: getStored(`shared_${body.key}`, null) };
       } else {
         // Fallback to AI generated API response
-        responseBody = await generateApiResponse(url, method, body, state, model);
+        const stateToUse = (state && Object.keys(state).length > 0) ? state : virtualState;
+        responseBody = await generateApiResponse(url, method, body, stateToUse, model);
       }
       
       // Send the response back to the iframe
@@ -802,7 +990,7 @@ const App: React.FC = () => {
         }
       }
     }
-  };
+  }, [model, virtualState]);
 
   const handleToggleBookmark = () => {
     if (!currentUrl) return;
@@ -848,12 +1036,43 @@ const App: React.FC = () => {
     setBookmarks([]);
   };
 
-  const handleSelectKey = async () => {
+  const handleSelectKey = useCallback(async () => {
     if (window.aistudio && window.aistudio.openSelectKey) {
       await window.aistudio.openSelectKey();
       setHasKey(true);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'INFINITE_WEB_NAVIGATE') {
+        const targetUrl = event.data.url;
+        handleIframeNavigate(targetUrl, event.data.state);
+      } else if (event.data && event.data.type === 'INFINITE_WEB_URL_UPDATE') {
+        handleIframeUrlUpdate(event.data.url, event.data.state);
+      } else if (event.data && event.data.type === 'INFINITE_WEB_SELECT_KEY') {
+        handleSelectKey();
+      } else if (event.data && event.data.type === 'INFINITE_WEB_STATE_UPDATE') {
+        handleStateUpdate(event.data.state);
+      } else if (event.data && event.data.type === 'INFINITE_WEB_API_CALL' && event.source) {
+        handleApiCall(event.data.url, event.data.method, event.data.body, event.data.state, event.data.requestId, event.source);
+      } else if (event.data && event.data.type === 'INFINITE_WEB_XR_SESSION') {
+        console.log('XR Session initiated by AI generated content:', event.data.sessionType);
+        // Handle XR session logic here (e.g., show a UI overlay, request permissions)
+        if (event.data.sessionType === 'immersive-vr') {
+          // Example: Notify user or prepare environment for VR
+        } else if (event.data.sessionType === 'immersive-ar') {
+          // Example: Notify user or prepare environment for AR
+        }
+      } else if (event.data && event.data.type === 'INFINITE_WEB_XR_TRACKING') {
+        // Handle XR tracking data (e.g., pose, hit test results)
+        // console.log('XR Tracking Data:', event.data.trackingData);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [handleIframeNavigate, handleIframeUrlUpdate, handleSelectKey, handleStateUpdate, handleApiCall]);
 
   const loadingMessages = [
     "Synthesizing latent reality...",
@@ -913,51 +1132,43 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen w-screen bg-[#050505]">
-      <AddressBar
-        nav={{
-          currentUrl,
-          isLoading: loading,
-          canGoBack: historyIndex > 0,
-          canGoForward: historyIndex < history.length - 1,
-        }}
-        config={{
-          model,
-          deviceType,
-          browserEra,
-          isDeepResearch: deepResearch,
-          isSoundEnabled: soundEnabled,
-        }}
-        panels={{
-          isDevToolsOpen,
-          isDownloadsOpen,
-          isBookmarked: bookmarks.some(b => b.url === currentUrl),
-        }}
-        userState={{
-          user,
-          canPublish: !!user && !!pageData && currentUrl !== 'infinite://directory',
-          canDownload: !!pageData && !loading,
-        }}
-        history={history}
-        bookmarks={bookmarks}
-        onNavigate={(url) => navigateTo(url)}
+      <AddressBar 
+        currentUrl={currentUrl}
+        isLoading={loading}
+        model={model}
+        deviceType={deviceType}
+        browserEra={browserEra}
+        onNavigate={(url, imageBase64) => navigateTo(url, false, undefined, imageBase64)}
         onBack={handleBack}
         onForward={handleForward}
         onReload={handleReload}
         onStop={handleStop}
-        onHome={handleHome}
         onDownload={handleDownload}
+        canDownload={!!pageData && !loading}
         onSetModel={setModel}
         onSetDeviceType={setDeviceType}
         onSetBrowserEra={setBrowserEra}
+        canGoBack={historyIndex > 0}
+        canGoForward={historyIndex < history.length - 1}
         onToggleHistory={() => setIsHistoryOpen(!isHistoryOpen)}
         onToggleDevTools={() => setIsDevToolsOpen(!isDevToolsOpen)}
+        isDevToolsOpen={isDevToolsOpen}
+        isBookmarked={bookmarks.some(b => b.url === currentUrl)}
         onToggleBookmark={handleToggleBookmark}
+        isDeepResearch={deepResearch}
         onToggleDeepResearch={() => setDeepResearch(!deepResearch)}
+        isSoundEnabled={soundEnabled}
         onToggleSound={() => setSoundEnabled(!soundEnabled)}
+        history={history}
+        bookmarks={bookmarks}
+        onHome={handleHome}
         onToggleDownloads={() => setIsDownloadsOpen(!isDownloadsOpen)}
+        isDownloadsOpen={isDownloadsOpen}
+        user={user}
         onLogin={signInWithGoogle}
         onLogout={logout}
         onPublish={handlePublish}
+        canPublish={!!user && !!pageData && currentUrl !== 'infinite://directory'}
       />
 
       <div className="flex-1 relative overflow-hidden flex flex-row">
@@ -1021,20 +1232,54 @@ const App: React.FC = () => {
           )}
 
           {pageData ? (
-            <BrowserViewport 
-              htmlContent={pageData.content} 
-              title={pageData.title}
-              isLoading={loading}
-              deviceType={deviceType}
-              webContainerUrl={pageData.webContainerUrl}
-              onNavigate={handleIframeNavigate}
-              onUrlUpdate={handleIframeUrlUpdate}
-              onSelectKey={handleSelectKey}
-              onStateUpdate={handleStateUpdate}
-              onApiCall={handleApiCall}
-            />
+            pageData.url.startsWith('wc://') ? (
+              <WebContainerIDE
+                webContainerUrl={pageData.webContainerUrl || ''}
+                terminalOutput={webContainerOutput}
+                onRestartServer={async () => {
+                  setWebContainerOutput('Restarting development server...\n');
+                  await startDevServer(
+                    (data) => setWebContainerOutput(prev => prev + data),
+                    (wcUrl) => {
+                      setPageData(prev => prev ? { ...prev, webContainerUrl: wcUrl } : null);
+                    },
+                    (error) => {
+                      // Auto-healing logic could be triggered here
+                      console.error("Dev server error:", error);
+                    }
+                  );
+                }}
+                onChatRequest={async (message, modelOverride) => {
+                  // Iterative AI Editing logic
+                  const targetModel = modelOverride || model;
+                  setWebContainerOutput(prev => prev + `\n[${targetModel}] Processing request: ${message}\n`);
+                  try {
+                    const { generateWebContainerUpdate } = await import('./services/geminiService');
+                    const { getProjectTree } = await import('./services/webContainerService');
+                    const fileTree = await getProjectTree();
+                    const updates = await generateWebContainerUpdate(message, targetModel, fileTree);
+                    if (updates && Object.keys(updates).length > 0) {
+                      setWebContainerOutput(prev => prev + `[${targetModel}] Applying updates to ${Object.keys(updates).length} files...\n`);
+                      await mountFiles(updates);
+                      setWebContainerOutput(prev => prev + `[${targetModel}] Updates applied successfully.\n`);
+                    } else {
+                      setWebContainerOutput(prev => prev + `[${targetModel}] No file changes were needed.\n`);
+                    }
+                  } catch (e: any) {
+                    setWebContainerOutput(prev => prev + `[${targetModel} Error] ${e.message}\n`);
+                  }
+                }}
+              />
+            ) : (
+              <BrowserViewport 
+                htmlContent={injectIframeScript(pageData.content)} 
+                title={pageData.title}
+                isLoading={loading}
+                deviceType={deviceType}
+              />
+            )
           ) : !loading && (
-            <HomePage onNavigate={(url) => navigateTo(url)} history={history} />
+            <EmptyState onNavigate={(url) => navigateTo(url)} />
           )}
         </div>
 
@@ -1072,11 +1317,6 @@ const App: React.FC = () => {
           0% { transform: translateX(-100%); }
           50% { transform: translateX(0%); }
           100% { transform: translateX(100%); }
-        }
-        @keyframes loading-slide {
-          0% { transform: translateX(-100%); }
-          50% { transform: translateX(150%); }
-          100% { transform: translateX(-100%); }
         }
       `}</style>
     </div>

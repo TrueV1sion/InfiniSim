@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Terminal } from 'xterm';
+import { FitAddon } from 'xterm-addon-fit';
+import 'xterm/css/xterm.css';
 import { ModelTier, ChatMessage } from '../types';
 
 interface DevToolsPanelProps {
@@ -6,7 +9,7 @@ interface DevToolsPanelProps {
   code: string;
   model: ModelTier;
   onApplyCode: (newCode: string) => void;
-  onAiRefine: (instruction: string) => Promise<void>;
+  onAiRefine: (instruction: string, modelOverride?: ModelTier) => Promise<void>;
   onClearCache: () => void;
   isGenerating: boolean;
   onClose: () => void;
@@ -34,7 +37,7 @@ const DevToolsPanel: React.FC<DevToolsPanelProps> = ({
   const [activeTab, setActiveTab] = useState<'code' | 'ai' | 'terminal'>('ai');
   const [localCode, setLocalCode] = useState(code);
   const [debouncedCode, setDebouncedCode] = useState(code);
-  const [showLivePreview, setShowLivePreview] = useState(false);
+  const [showLivePreview, setShowLivePreview] = useState(true);
   const [bottomTab, setBottomTab] = useState<'problems' | 'console'>('problems');
   const [previewMode, setPreviewMode] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
   
@@ -58,6 +61,82 @@ const DevToolsPanel: React.FC<DevToolsPanelProps> = ({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const consoleEndRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLDivElement>(null);
+  
+  const terminalRef = useRef<HTMLDivElement>(null);
+  const xtermRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const onAiRefineRef = useRef(onAiRefine);
+
+  useEffect(() => {
+    onAiRefineRef.current = onAiRefine;
+  }, [onAiRefine]);
+
+  useEffect(() => {
+    if (terminalRef.current && !xtermRef.current) {
+      const term = new Terminal({
+        theme: { background: '#050505' },
+        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        fontSize: 12,
+        cursorBlink: true,
+      });
+      const fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
+      term.open(terminalRef.current);
+      fitAddon.fit();
+      
+      xtermRef.current = term;
+      fitAddonRef.current = fitAddon;
+
+      let currentLine = '';
+      term.onData(e => {
+        if (e === '\r') {
+          // Enter
+          term.write('\r\n');
+          const input = currentLine.trim();
+          if (input) {
+            if (input.startsWith('claude ')) {
+              onAiRefineRef.current(input.substring(7), 'claude');
+            } else if (input.startsWith('gemini ')) {
+              onAiRefineRef.current(input.substring(7), 'gemini');
+            } else {
+              term.write(`Command not found: ${input.split(' ')[0]}. Try 'claude <prompt>' or 'gemini <prompt>'\r\n`);
+            }
+          }
+          currentLine = '';
+          term.write('$ ');
+        } else if (e === '\u007F') {
+          // Backspace
+          if (currentLine.length > 0) {
+            currentLine = currentLine.substring(0, currentLine.length - 1);
+            term.write('\b \b');
+          }
+        } else {
+          currentLine += e;
+          term.write(e);
+        }
+      });
+      
+      term.write('$ ');
+
+      const resizeObserver = new ResizeObserver(() => {
+        fitAddon.fit();
+      });
+      resizeObserver.observe(terminalRef.current);
+      
+      return () => resizeObserver.disconnect();
+    }
+  }, []);
+
+  useEffect(() => {
+    if (xtermRef.current && webContainerOutput) {
+      xtermRef.current.clear();
+      xtermRef.current.write(webContainerOutput.replace(/\n/g, '\r\n'));
+      if (!webContainerOutput.endsWith('\n')) {
+        xtermRef.current.write('\r\n');
+      }
+      xtermRef.current.write('$ ');
+    }
+  }, [webContainerOutput]);
 
   // --- Auto-Save Logic ---
   useEffect(() => {
@@ -414,6 +493,12 @@ const DevToolsPanel: React.FC<DevToolsPanelProps> = ({
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
         </button>
+        <button
+          onClick={handleManualApply}
+          className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded text-xs font-medium transition-colors shadow-lg shadow-purple-900/20 ml-2"
+        >
+          Apply Changes
+        </button>
         <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors p-1.5 hover:bg-white/10 rounded-md ml-1">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
@@ -670,21 +755,13 @@ const DevToolsPanel: React.FC<DevToolsPanelProps> = ({
                 >
                 Reset
                 </button>
-                <button
-                onClick={handleManualApply}
-                className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded text-xs font-medium transition-colors shadow-lg shadow-purple-900/20"
-                >
-                Apply Changes
-                </button>
              </div>
            </div>
         </div>
 
         {/* Terminal Tab */}
         <div className={`absolute inset-0 flex flex-col ${activeTab === 'terminal' ? 'z-10 bg-[#0a0a0a]' : 'z-0 invisible'}`}>
-          <div className="flex-1 overflow-y-auto p-4 font-mono text-xs text-green-400 whitespace-pre-wrap bg-[#050505]">
-            {webContainerOutput || 'Terminal output will appear here...'}
-          </div>
+          <div className="flex-1 overflow-hidden p-2 bg-[#050505]" ref={terminalRef}></div>
         </div>
 
       </div>
