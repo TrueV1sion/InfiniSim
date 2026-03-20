@@ -432,6 +432,34 @@ const App: React.FC = () => {
               isLoading: false,
               generatedBy: model
             });
+        } else if (displayMessage.toLowerCase().includes('upgrade') || displayMessage.includes('FAILED_PRECONDITION') || displayMessage.includes('billing')) {
+            const errorHtml = `
+              <!DOCTYPE html>
+              <html>
+              <head><script src="https://cdn.tailwindcss.com"></script></head>
+              <body class="bg-[#050505] text-white flex items-center justify-center min-h-screen p-10 font-sans">
+                <div class="max-w-md w-full p-8 rounded-3xl bg-white/5 border border-white/10 backdrop-blur-3xl shadow-[0_0_50px_rgba(239,68,68,0.1)]">
+                    <div class="w-16 h-16 bg-amber-500/10 text-amber-500 rounded-2xl flex items-center justify-center mb-6">
+                        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                    </div>
+                    <h1 class="text-2xl font-bold mb-2">Plan Upgrade Required</h1>
+                    <p class="text-gray-400 text-sm mb-6 leading-relaxed">The model <strong class="text-white">${model}</strong> requires a paid API plan. You can either upgrade your Google AI billing or switch to a different model.</p>
+                    <div class="flex flex-col gap-3">
+                        <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noreferrer" class="w-full py-3 bg-amber-600 hover:bg-amber-500 rounded-xl transition-all font-semibold shadow-lg shadow-amber-600/20 text-center block">View Billing Options</a>
+                        <button onclick="window.parent.postMessage({ type: 'INFINITE_WEB_SELECT_KEY' }, '*')" class="w-full py-3 bg-white/10 hover:bg-white/20 rounded-xl transition-all font-semibold">Change API Key</button>
+                        <button onclick="window.parent.postMessage({ type: 'INFINITE_WEB_NAVIGATE', url: '${url}' }, '*')" class="w-full py-3 bg-white/5 hover:bg-white/10 rounded-xl transition-all font-semibold text-gray-400">Retry</button>
+                    </div>
+                </div>
+              </body>
+              </html>
+            `;
+            setPageData({
+              url,
+              content: errorHtml,
+              title: 'Upgrade Required',
+              isLoading: false,
+              generatedBy: model
+            });
         } else if (displayMessage.includes('token count exceeds') || displayMessage.includes('400')) {
             const errorHtml = `
               <!DOCTYPE html>
