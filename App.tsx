@@ -133,6 +133,8 @@ const App: React.FC = () => {
       if (window.aistudio && window.aistudio.hasSelectedApiKey) {
         const selected = await window.aistudio.hasSelectedApiKey();
         setHasKey(selected);
+      } else if (!process.env.API_KEY) {
+        setHasKey(false);
       }
     };
     checkKey();
@@ -401,7 +403,7 @@ const App: React.FC = () => {
           // ignore
         }
         
-        if (displayMessage.includes('Requested entity was not found')) {
+        if (displayMessage.includes('Requested entity was not found') || displayMessage.includes('API Key not found')) {
             setHasKey(false);
         } else if (displayMessage.includes('429') || displayMessage.includes('quota') || displayMessage.includes('RESOURCE_EXHAUSTED')) {
             const errorHtml = `
@@ -673,7 +675,7 @@ const App: React.FC = () => {
         // ignore
       }
       
-      if (displayMessage.includes('Requested entity was not found')) {
+      if (displayMessage.includes('Requested entity was not found') || displayMessage.includes('API Key not found')) {
           setHasKey(false);
       } else if (displayMessage.includes('429') || displayMessage.includes('quota') || displayMessage.includes('RESOURCE_EXHAUSTED')) {
           // Do not block the UI, just throw so DevToolsPanel can catch it
