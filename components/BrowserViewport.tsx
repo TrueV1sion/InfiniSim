@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
+import { DeviceType } from '../types';
 
-export type DeviceType = 'desktop' | 'tablet' | 'mobile' | 'vr' | 'ar';
+export type { DeviceType };
 
 interface BrowserViewportProps {
   htmlContent: string;

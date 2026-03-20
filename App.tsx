@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AddressBar from './components/AddressBar';
 import BrowserViewport from './components/BrowserViewport';
-import EmptyState from './components/EmptyState';
+import HomePage from './components/homepage/HomePage';
 import HistoryPanel from './components/HistoryPanel';
 import DevToolsPanel from './components/DevToolsPanel';
 import DownloadsPanel from './components/DownloadsPanel';
 import { LiveCopilot } from './components/LiveCopilot';
-import { ModelTier, WebPage, HistoryItem, Bookmark, DownloadItem, BrowserEra } from './types';
+import { ModelTier, WebPage, HistoryItem, Bookmark, DownloadItem, BrowserEra, DeviceType } from './types';
 import { refinePageContent, generatePageContentStream, processAiImages, cleanHtml, PRELOADED_SCRIPTS, generateApiResponse, generateWebContainerApp } from './services/geminiService';
 import { mountFiles, startDevServer } from './services/webContainerService';
 import { auth, db, signInWithGoogle, logout } from './firebase';
@@ -82,7 +82,7 @@ const App: React.FC = () => {
     getStored('model', ModelTier.FLASH)
   );
 
-  const [deviceType, setDeviceType] = useState<'desktop' | 'tablet' | 'mobile' | 'vr' | 'ar'>(() => 
+  const [deviceType, setDeviceType] = useState<DeviceType>(() =>
     getStored('deviceType', 'desktop')
   );
 
@@ -883,43 +883,51 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen w-screen bg-[#050505]">
-      <AddressBar 
-        currentUrl={currentUrl}
-        isLoading={loading}
-        model={model}
-        deviceType={deviceType}
-        browserEra={browserEra}
+      <AddressBar
+        nav={{
+          currentUrl,
+          isLoading: loading,
+          canGoBack: historyIndex > 0,
+          canGoForward: historyIndex < history.length - 1,
+        }}
+        config={{
+          model,
+          deviceType,
+          browserEra,
+          isDeepResearch: deepResearch,
+          isSoundEnabled: soundEnabled,
+        }}
+        panels={{
+          isDevToolsOpen,
+          isDownloadsOpen,
+          isBookmarked: bookmarks.some(b => b.url === currentUrl),
+        }}
+        userState={{
+          user,
+          canPublish: !!user && !!pageData && currentUrl !== 'infinite://directory',
+          canDownload: !!pageData && !loading,
+        }}
+        history={history}
+        bookmarks={bookmarks}
         onNavigate={(url) => navigateTo(url)}
         onBack={handleBack}
         onForward={handleForward}
         onReload={handleReload}
         onStop={handleStop}
+        onHome={handleHome}
         onDownload={handleDownload}
-        canDownload={!!pageData && !loading}
         onSetModel={setModel}
         onSetDeviceType={setDeviceType}
         onSetBrowserEra={setBrowserEra}
-        canGoBack={historyIndex > 0}
-        canGoForward={historyIndex < history.length - 1}
         onToggleHistory={() => setIsHistoryOpen(!isHistoryOpen)}
         onToggleDevTools={() => setIsDevToolsOpen(!isDevToolsOpen)}
-        isDevToolsOpen={isDevToolsOpen}
-        isBookmarked={bookmarks.some(b => b.url === currentUrl)}
         onToggleBookmark={handleToggleBookmark}
-        isDeepResearch={deepResearch}
         onToggleDeepResearch={() => setDeepResearch(!deepResearch)}
-        isSoundEnabled={soundEnabled}
         onToggleSound={() => setSoundEnabled(!soundEnabled)}
-        history={history}
-        bookmarks={bookmarks}
-        onHome={handleHome}
         onToggleDownloads={() => setIsDownloadsOpen(!isDownloadsOpen)}
-        isDownloadsOpen={isDownloadsOpen}
-        user={user}
         onLogin={signInWithGoogle}
         onLogout={logout}
         onPublish={handlePublish}
-        canPublish={!!user && !!pageData && currentUrl !== 'infinite://directory'}
       />
 
       <div className="flex-1 relative overflow-hidden flex flex-row">
@@ -996,7 +1004,7 @@ const App: React.FC = () => {
               onApiCall={handleApiCall}
             />
           ) : !loading && (
-            <EmptyState onNavigate={(url) => navigateTo(url)} />
+            <HomePage onNavigate={(url) => navigateTo(url)} history={history} />
           )}
         </div>
 
@@ -1034,6 +1042,11 @@ const App: React.FC = () => {
           0% { transform: translateX(-100%); }
           50% { transform: translateX(0%); }
           100% { transform: translateX(100%); }
+        }
+        @keyframes loading-slide {
+          0% { transform: translateX(-100%); }
+          50% { transform: translateX(150%); }
+          100% { transform: translateX(-100%); }
         }
       `}</style>
     </div>
